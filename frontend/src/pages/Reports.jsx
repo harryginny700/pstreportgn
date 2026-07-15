@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Download, FileText, ArrowRight, TrendingUp, TrendingDown, Percent, Wallet, Receipt, Landmark, Coins, ArrowLeftRight } from "lucide-react";
+import { Download, FileText, ArrowRight, TrendingUp, TrendingDown, Percent, Wallet, Receipt, Landmark, Coins, ArrowLeftRight, Scale, PlusCircle, MinusCircle, Users, CreditCard, PiggyBank, Sparkles } from "lucide-react";
 
 const MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 
@@ -231,41 +231,27 @@ function DailyReportGrid({ data }) {
       {/* ============ RIGHT: Stat blocks ============ */}
       <div className="col-span-12 xl:col-span-5 space-y-3">
         {/* Members block (Site üyeleri) */}
-        <StatBlock accent="primary" testId="stats-members">
-          <StatRow label="Site Üyeleri Yatırım" value={totalDeposit} tone="green" />
-          <StatRow label="Site Üyeleri Çekim" value={totalWithdrawal} tone="red" />
-          <StatRow label="Toplam Ödenen Komisyon" value={totalCommission} tone="yellow" bold />
-          <StatRow label="Site Üyeleri Günlük Kalan" value={totalNet} tone={totalNet >= 0 ? "green" : "red"} />
-          <StatRow label="Üyeler Yatırım-Çekim Farkı" value={memberDelta} tone={memberDelta >= 0 ? "green" : "red"} />
+        <StatBlock accent="primary" testId="stats-members" icon={Users} title="Site Üyeleri">
+          <StatRow icon={TrendingUp} label="Site Üyeleri Yatırım" value={totalDeposit} tone="green" />
+          <StatRow icon={TrendingDown} label="Site Üyeleri Çekim" value={totalWithdrawal} tone="red" />
+          <StatRow icon={Percent} label="Toplam Ödenen Komisyon" value={totalCommission} tone="yellow" bold />
+          <StatRow icon={PiggyBank} label="Site Üyeleri Günlük Kalan" value={totalNet} tone={totalNet >= 0 ? "green" : "red"} />
+          <StatRow icon={Scale} label="Üyeler Yatırım-Çekim Farkı" value={memberDelta} tone={memberDelta >= 0 ? "green" : "red"} />
         </StatBlock>
 
         {/* Manual block (Krediler) */}
         <StatBlock accent="green" testId="stats-manual" icon={Coins} title="Manueller (Krediler)">
-          <StatRow label="Eklenen Manuel Toplamı" value={s.credit_added || 0} tone="cyan" />
-          <StatRow label="Ödenen Manuel Toplamı" value={s.credit_paid || 0} tone="cyan" />
-          <StatRow label="Manueller Fark" value={manuelDelta} tone={manuelDelta >= 0 ? "green" : "red"} bold />
+          <StatRow icon={PlusCircle} label="Eklenen Manuel Toplamı" value={s.credit_added || 0} tone="cyan" />
+          <StatRow icon={MinusCircle} label="Ödenen Manuel Toplamı" value={s.credit_paid || 0} tone="cyan" />
+          <StatRow icon={Scale} label="Manueller Fark" value={manuelDelta} tone={manuelDelta >= 0 ? "green" : "red"} bold />
         </StatBlock>
 
         {/* Site totals */}
-        <StatBlock accent="primary" testId="stats-site-totals">
-          <StatRow label="Toplam Site Yatırım" value={totalDeposit} tone="green" bold />
-          <StatRow label="Toplam Site Çekim" value={totalWithdrawal} tone="red" bold />
-          <StatRow label="Yapılan Ödemeler" value={totalExpense} tone="red" icon={Receipt} bold highlight />
+        <StatBlock accent="primary" testId="stats-site-totals" icon={Wallet} title="Site Toplamları">
+          <StatRow icon={TrendingUp} label="Toplam Site Yatırım" value={totalDeposit} tone="green" bold />
+          <StatRow icon={TrendingDown} label="Toplam Site Çekim" value={totalWithdrawal} tone="red" bold />
+          <StatRow icon={Receipt} label="Yapılan Ödemeler" value={totalExpense} tone="red" bold highlight />
         </StatBlock>
-
-        {/* Bottom line P/L */}
-        <div className={`border-2 rounded-sm p-5 ${profitLoss >= 0 ? "border-[hsl(144_100%_50%)]/50 bg-[hsl(144_100%_50%)]/[0.06]" : "border-[hsl(345_100%_60%)]/50 bg-[hsl(345_100%_60%)]/[0.06]"}`} data-testid="stats-pnl">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Sonuç</div>
-            <Landmark className={`w-4 h-4 ${profitLoss >= 0 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} />
-          </div>
-          <div className="flex items-baseline justify-between">
-            <div className="font-display text-lg text-white">Toplam Kar / Zarar</div>
-            <div className={`font-data text-3xl font-light tracking-tight ${profitLoss >= 0 ? "text-[hsl(144_100%_55%)] glow-green" : "text-[hsl(345_100%_65%)] glow-red"}`} data-testid="daily-profit-loss">
-              {fmtTRY(profitLoss)}
-            </div>
-          </div>
-        </div>
 
         {/* Transfers */}
         <div className="border border-border rounded-sm bg-card overflow-hidden" data-testid="stats-transfers">
@@ -297,13 +283,15 @@ function DailyReportGrid({ data }) {
           )}
         </div>
 
-        {/* Expenses list (if any) */}
-        {data.expenses.length > 0 && (
-          <div className="border border-border rounded-sm bg-card overflow-hidden" data-testid="stats-expenses">
-            <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
-              <Receipt className="w-3.5 h-3.5 text-[hsl(345_100%_65%)]" />
-              <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Yapılan Ödemeler</div>
-            </div>
+        {/* Expenses list (always shown) */}
+        <div className="border border-border rounded-sm bg-card overflow-hidden" data-testid="stats-expenses">
+          <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
+            <Receipt className="w-3.5 h-3.5 text-[hsl(345_100%_65%)]" />
+            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Yapılan Ödemeler</div>
+          </div>
+          {data.expenses.length === 0 ? (
+            <div className="p-4 text-center text-xs text-neutral-500 font-data">Ödeme yok</div>
+          ) : (
             <div className="divide-y divide-border">
               {data.expenses.map((e) => (
                 <div key={e.id} className="px-4 py-2 flex items-center justify-between text-xs" data-testid={`expense-row-${e.id}`}>
@@ -313,8 +301,25 @@ function DailyReportGrid({ data }) {
                 </div>
               ))}
             </div>
+          )}
+        </div>
+
+        {/* Bottom line P/L */}
+        <div className={`border-2 rounded-sm p-5 ${profitLoss >= 0 ? "border-[hsl(144_100%_50%)]/50 bg-[hsl(144_100%_50%)]/[0.06]" : "border-[hsl(345_100%_60%)]/50 bg-[hsl(345_100%_60%)]/[0.06]"}`} data-testid="stats-pnl">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Sonuç</div>
+            <Landmark className={`w-4 h-4 ${profitLoss >= 0 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} />
           </div>
-        )}
+          <div className="flex items-baseline justify-between">
+            <div className="font-display text-lg text-white flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-primary" />
+              Toplam Kar / Zarar
+            </div>
+            <div className={`font-data text-3xl font-light tracking-tight ${profitLoss >= 0 ? "text-[hsl(144_100%_55%)] glow-green" : "text-[hsl(345_100%_65%)] glow-red"}`} data-testid="daily-profit-loss">
+              {fmtTRY(profitLoss)}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
