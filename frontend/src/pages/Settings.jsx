@@ -121,19 +121,41 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Info panels */}
-      <div className="grid md:grid-cols-2 gap-4">
-        <div className="border border-border rounded-sm bg-card p-5">
-          <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-3">Kasalar</div>
-          <ul className="space-y-1.5 text-sm font-data text-neutral-300">
-            {kasalar.map((k) => <li key={k.id} data-testid={`settings-kasa-${k.name}`}>{k.name}</li>)}
-          </ul>
+      {/* Editable Kasalar */}
+      <div>
+        <h3 className="font-display text-lg text-white mb-4">Kasalar</h3>
+        <div className="border border-border rounded-sm bg-card overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Kasa İsmi</TableHead>
+                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-right">Açılış Bakiyesi</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {kasalar.map((k) => <KasaRow key={k.id} kasa={k} onSaved={load} />)}
+            </TableBody>
+          </Table>
         </div>
-        <div className="border border-border rounded-sm bg-card p-5">
-          <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-3">Krediciler</div>
-          <ul className="space-y-1.5 text-sm font-data text-neutral-300">
-            {debtors.map((d) => <li key={d.id} data-testid={`settings-debtor-${d.name}`}>{d.name}</li>)}
-          </ul>
+      </div>
+
+      {/* Editable Krediciler */}
+      <div>
+        <h3 className="font-display text-lg text-white mb-4">Krediciler</h3>
+        <div className="border border-border rounded-sm bg-card overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Kredici İsmi</TableHead>
+                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-right">Açılış Bakiyesi</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {debtors.map((d) => <DebtorRow key={d.id} debtor={d} onSaved={load} />)}
+            </TableBody>
+          </Table>
         </div>
       </div>
 
@@ -151,5 +173,123 @@ export default function Settings() {
         </div>
       </div>
     </div>
+  );
+}
+
+function KasaRow({ kasa, onSaved }) {
+  const [name, setName] = useState(kasa.name);
+  const [initial, setInitial] = useState(kasa.initial_balance || 0);
+  const [saving, setSaving] = useState(false);
+  const changed = name !== kasa.name || Number(initial) !== Number(kasa.initial_balance || 0);
+
+  const save = async () => {
+    if (!name.trim()) return toast.error("İsim boş olamaz");
+    setSaving(true);
+    try {
+      await api.put(`/cash-registers/${kasa.id}`, {
+        name: name.trim(),
+        type: kasa.type || "main",
+        parent_id: kasa.parent_id || null,
+        initial_balance: Number(initial) || 0,
+      });
+      toast.success(`${name} güncellendi`);
+      onSaved();
+    } catch (e) {
+      toast.error("Kayıt hatası");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <TableRow className="border-border hover:bg-white/[0.02]" data-testid={`kasa-edit-row-${kasa.id}`}>
+      <TableCell>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="max-w-xs bg-transparent border-border rounded-sm h-8 text-sm"
+          data-testid={`kasa-name-${kasa.id}`}
+        />
+      </TableCell>
+      <TableCell className="text-right">
+        <Input
+          type="number"
+          step="0.01"
+          value={initial}
+          onChange={(e) => setInitial(e.target.value)}
+          className="w-36 ml-auto text-right font-data bg-transparent border-border rounded-sm h-8 text-xs"
+          data-testid={`kasa-initial-${kasa.id}`}
+        />
+      </TableCell>
+      <TableCell>
+        <Button
+          size="sm"
+          onClick={save}
+          disabled={!changed || saving}
+          className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 disabled:opacity-40"
+          data-testid={`kasa-save-${kasa.id}`}
+        >
+          <Save className="w-3 h-3" /> Kaydet
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function DebtorRow({ debtor, onSaved }) {
+  const [name, setName] = useState(debtor.name);
+  const [initial, setInitial] = useState(debtor.initial_balance || 0);
+  const [saving, setSaving] = useState(false);
+  const changed = name !== debtor.name || Number(initial) !== Number(debtor.initial_balance || 0);
+
+  const save = async () => {
+    if (!name.trim()) return toast.error("İsim boş olamaz");
+    setSaving(true);
+    try {
+      await api.put(`/debtors/${debtor.id}`, {
+        name: name.trim(),
+        initial_balance: Number(initial) || 0,
+      });
+      toast.success(`${name} güncellendi`);
+      onSaved();
+    } catch (e) {
+      toast.error("Kayıt hatası");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <TableRow className="border-border hover:bg-white/[0.02]" data-testid={`debtor-edit-row-${debtor.id}`}>
+      <TableCell>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="max-w-xs bg-transparent border-border rounded-sm h-8 text-sm"
+          data-testid={`debtor-name-${debtor.id}`}
+        />
+      </TableCell>
+      <TableCell className="text-right">
+        <Input
+          type="number"
+          step="0.01"
+          value={initial}
+          onChange={(e) => setInitial(e.target.value)}
+          className="w-36 ml-auto text-right font-data bg-transparent border-border rounded-sm h-8 text-xs"
+          data-testid={`debtor-initial-${debtor.id}`}
+        />
+      </TableCell>
+      <TableCell>
+        <Button
+          size="sm"
+          onClick={save}
+          disabled={!changed || saving}
+          className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 disabled:opacity-40"
+          data-testid={`debtor-save-${debtor.id}`}
+        >
+          <Save className="w-3 h-3" /> Kaydet
+        </Button>
+      </TableCell>
+    </TableRow>
   );
 }
