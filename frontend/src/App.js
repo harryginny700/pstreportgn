@@ -15,6 +15,7 @@ import Reports from "@/pages/Reports";
 import Settings from "@/pages/Settings";
 import AdminHome from "@/pages/AdminHome";
 import Profile from "@/pages/Profile";
+import Rollovers from "@/pages/Rollovers";
 import { Loader2 } from "lucide-react";
 
 function ProtectedRoute({ children, adminOnly = false }) {
@@ -44,6 +45,7 @@ function AppRoutes() {
         <Route path="/giderler" element={<Expenses />} />
         <Route path="/transferler" element={<Transfers />} />
         <Route path="/raporlar" element={<Reports />} />
+        <Route path="/devirler" element={<Rollovers />} />
         <Route path="/ayarlar" element={<Settings />} />
         <Route path="/profil" element={<Profile />} />
         <Route path="/admin" element={<ProtectedRoute adminOnly><AdminHome /></ProtectedRoute>} />

@@ -208,6 +208,23 @@ class Transfer(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
+class MonthlyRollover(BaseModel):
+    """Aylık devir arşivi. Verileri silmez, sadece o ayın snapshot'ını saklar."""
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=uid)
+    site_id: str
+    year: int
+    month: int  # 1-12
+    closed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    closed_by_user_id: str
+    closed_by_email: str
+    summary: dict  # deposit, withdrawal, commission, net, expense, credit_added, credit_paid, profit_loss
+    kasa_snapshots: List[dict]  # [{id, name, opening_balance, closing_balance, delta}]
+    debtor_snapshots: List[dict]  # [{id, name, balance}]
+    total_cash_at_close: float
+    note: Optional[str] = None
+
+
 # ============== INPUT SCHEMAS ==============
 
 class LoginInput(BaseModel):
@@ -1296,6 +1313,161 @@ async def seed_defaults(sid: str, user: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# ============== ROLLOVERS (Aylık Devir) ==============
+
+class RolloverInput(BaseModel):
+    year: int
+    month: int
+    note: Optional[str] = None
+
+
+def _resolve_target_site(user: dict, site_id: Optional[str]) -> str:
+    if user.get("platform_role") == "admin":
+        if not site_id:
+            raise HTTPException(400, "Admin için site_id gerekli")
+        return site_id
+    return user["site_id"]
+
+
+@api_router.get("/rollovers")
+async def list_rollovers(
+    site_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    q = scope_filter(user, _site_id_query_param(user, site_id))
+    docs = await db.rollovers.find(q, {"_id": 0}).sort([("year", -1), ("month", -1)]).to_list(500)
+    return docs
+
+
+@api_router.get("/rollovers/{rid}")
+async def get_rollover(rid: str, user: dict = Depends(get_current_user)):
+    q = {"id": rid, **scope_filter(user)}
+    doc = await db.rollovers.find_one(q, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Devir kaydı bulunamadı")
+    return doc
+
+
+@api_router.post("/rollovers")
+async def create_rollover(
+    inp: RolloverInput,
+    site_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    sid = _resolve_target_site(user, site_id)
+    if not (1 <= inp.month <= 12):
+        raise HTTPException(400, "Geçersiz ay")
+
+    # Duplicate check
+    exists = await db.rollovers.find_one({"site_id": sid, "year": inp.year, "month": inp.month})
+    if exists:
+        raise HTTPException(400, f"{inp.year}-{inp.month:02d} devri zaten alınmış")
+
+    _, last = monthrange(inp.year, inp.month)
+    d_from = date(inp.year, inp.month, 1).isoformat()
+    d_to = date(inp.year, inp.month, last).isoformat()
+
+    # Aggregate month's summary
+    q = {"site_id": sid, "date": {"$gte": d_from, "$lte": d_to}}
+    tx = {"deposit": 0.0, "withdrawal": 0.0, "commission": 0.0, "net": 0.0}
+    async for row in db.transactions.aggregate([{"$match": q}, {"$group": {
+        "_id": None, "deposit": {"$sum": "$deposit"}, "withdrawal": {"$sum": "$withdrawal"},
+        "commission": {"$sum": "$commission"}, "net": {"$sum": "$net"}}}]):
+        tx = row
+    ex_total = 0.0
+    async for row in db.expenses.aggregate([{"$match": q}, {"$group": {"_id": None, "total": {"$sum": "$amount"}}}]):
+        ex_total = row["total"]
+    cr = {"added": 0.0, "paid": 0.0}
+    async for row in db.credits.aggregate([{"$match": q}, {"$group": {"_id": None, "added": {"$sum": "$added"}, "paid": {"$sum": "$paid"}}}]):
+        cr = row
+
+    summary = {
+        "deposit": tx["deposit"], "withdrawal": tx["withdrawal"],
+        "commission": tx["commission"], "net": tx["net"],
+        "expense": ex_total,
+        "credit_added": cr["added"], "credit_paid": cr["paid"],
+        "profit_loss": round(tx["net"] - ex_total, 2),
+    }
+
+    # Balance snapshots (current live balance)
+    balances = await compute_balances_for_site(sid)
+    kasa_snapshots = []
+    for b in balances:
+        kasa_snapshots.append({
+            "id": b["id"], "name": b["name"],
+            "opening_balance": b["initial_balance"],
+            "closing_balance": b["balance"],
+            "delta": round(b["balance"] - b["initial_balance"], 2),
+        })
+    total_cash = round(sum(b["balance"] for b in balances), 2)
+
+    # Debtor snapshots (per debtor: initial + credits_added - credits_paid up to end of month)
+    debtors = await db.debtors.find({"site_id": sid}, {"_id": 0}).to_list(1000)
+    debtor_snapshots = []
+    for d in debtors:
+        added = 0.0
+        paid = 0.0
+        async for c in db.credits.find({"site_id": sid, "debtor_id": d["id"], "date": {"$lte": d_to}}, {"_id": 0}):
+            added += c.get("added", 0.0)
+            paid += c.get("paid", 0.0)
+        debtor_snapshots.append({
+            "id": d["id"], "name": d["name"],
+            "balance": round(d.get("initial_balance", 0.0) + added - paid, 2),
+        })
+
+    obj = MonthlyRollover(
+        site_id=sid, year=inp.year, month=inp.month,
+        closed_by_user_id=user["id"],
+        closed_by_email=user["email"],
+        summary=summary,
+        kasa_snapshots=kasa_snapshots,
+        debtor_snapshots=debtor_snapshots,
+        total_cash_at_close=total_cash,
+        note=inp.note,
+    )
+
+    # Roll cash forward: update each kasa's initial_balance to include this month's delta,
+    # then delete this month's transactions/expenses/credits/transfers so next month starts fresh
+    # with the carried-forward balance in initial_balance.
+    for ks in kasa_snapshots:
+        await db.cash_registers.update_one(
+            {"id": ks["id"], "site_id": sid},
+            {"$set": {"initial_balance": ks["closing_balance"]}}
+        )
+    # Update debtor initial balances to their computed month-end values
+    for ds in debtor_snapshots:
+        await db.debtors.update_one(
+            {"id": ds["id"], "site_id": sid},
+            {"$set": {"initial_balance": ds["balance"]}}
+        )
+    # Delete this month's live transactional data (archived in the rollover snapshot)
+    await db.transactions.delete_many(q)
+    await db.expenses.delete_many(q)
+    await db.credits.delete_many(q)
+    await db.transfers.delete_many(q)
+
+    await db.rollovers.insert_one(obj.model_dump())
+    await log_audit(user, "rollover.create", "rollover", obj.id,
+                    target_name=f"{inp.year}-{inp.month:02d}",
+                    details={"total_cash": total_cash, "profit_loss": summary["profit_loss"]},
+                    site_id=sid)
+    return obj
+
+
+@api_router.delete("/rollovers/{rid}")
+async def delete_rollover(rid: str, user: dict = Depends(require_admin)):
+    """Sadece admin, yanlış alınan bir devri silebilir. Silme sadece snapshot'ı siler;
+    zaten silinmiş olan geçmiş ay verilerini geri getirmez."""
+    doc = await db.rollovers.find_one({"id": rid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Devir kaydı bulunamadı")
+    await db.rollovers.delete_one({"id": rid})
+    await log_audit(user, "rollover.delete", "rollover", rid,
+                    target_name=f"{doc['year']}-{doc['month']:02d}",
+                    site_id=doc.get("site_id"))
+    return {"ok": True}
+
+
 # ============== ROOT ==============
 
 @api_router.get("/")
@@ -1376,6 +1548,7 @@ async def _startup():
     await db.sites.create_index("name")
     await db.audit_logs.create_index([("timestamp", -1)])
     await db.audit_logs.create_index("user_id")
+    await db.rollovers.create_index([("site_id", 1), ("year", -1), ("month", -1)])
     try:
         await seed_admin_and_migrate()
     except Exception as e:

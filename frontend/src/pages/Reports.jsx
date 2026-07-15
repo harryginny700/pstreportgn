@@ -7,7 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Download, FileText, ArrowRight, TrendingUp, TrendingDown, Percent, Wallet, Receipt, Landmark, Coins, ArrowLeftRight, Scale, PlusCircle, MinusCircle, Users, CreditCard, PiggyBank, Sparkles } from "lucide-react";
+import { Download, FileText, ArrowRight, TrendingUp, TrendingDown, Percent, Wallet, Receipt, Landmark, Coins, ArrowLeftRight, Scale, PlusCircle, MinusCircle, Users, CreditCard, PiggyBank, Sparkles, Archive, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 
@@ -18,6 +19,8 @@ export default function Reports() {
   const [monthly, setMonthly] = useState(null);
   const [dailyDate, setDailyDate] = useState(todayISO());
   const [daily, setDaily] = useState(null);
+  const [rollingOver, setRollingOver] = useState(false);
+  const navigate = useNavigate();
 
   const loadMonthly = async () => {
     try {
@@ -39,6 +42,28 @@ export default function Reports() {
   const exportRange = () => {
     if (!monthly) return;
     window.open(`${API}/export/transactions?date_from=${monthly.range.from}&date_to=${monthly.range.to}`, "_blank");
+  };
+
+  const doRollover = async () => {
+    const confirmed = confirm(
+      `${MONTHS[month - 1]} ${year} ayının devri alınacak.\n\n` +
+      "• Bu ayın tüm raporları arşivlenecek (Devirler sayfasında görüntülenebilir)\n" +
+      "• Toplam kasa bakiyeleri bir sonraki aya devredilecek (yeni açılış bakiyesi olur)\n" +
+      "• Bu ayın işlem/gider/kredi/transfer kayıtları canlı listeden kaldırılıp arşive taşınır\n\n" +
+      "Devam edilsin mi?"
+    );
+    if (!confirmed) return;
+    setRollingOver(true);
+    try {
+      await api.post("/rollovers", { year, month });
+      toast.success("Devir başarıyla alındı");
+      loadMonthly();
+      navigate("/devirler");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Devir hatası");
+    } finally {
+      setRollingOver(false);
+    }
   };
 
   return (
@@ -83,12 +108,21 @@ export default function Reports() {
                 </Select>
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Button onClick={exportRange} variant="outline" className="rounded-sm border-border hover:bg-secondary h-9 gap-2" data-testid="export-tx">
                 <Download className="w-4 h-4" /> İşlemler CSV
               </Button>
-              <Button onClick={exportMonthly} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95" data-testid="export-monthly">
+              <Button onClick={exportMonthly} variant="outline" className="rounded-sm border-border hover:bg-secondary h-9 gap-2" data-testid="export-monthly">
                 <FileText className="w-4 h-4" /> Rapor CSV
+              </Button>
+              <Button
+                onClick={doRollover}
+                disabled={rollingOver}
+                className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95 disabled:opacity-60"
+                data-testid="do-rollover"
+              >
+                {rollingOver ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
+                Aylık Devir Yap
               </Button>
             </div>
           </div>

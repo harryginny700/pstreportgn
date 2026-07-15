@@ -19,6 +19,7 @@ import {
   Moon,
   Menu,
   X,
+  Archive,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
@@ -34,6 +35,7 @@ const siteNav = [
   { to: "/giderler", icon: Receipt, label: "Giderler", testId: "nav-giderler" },
   { to: "/transferler", icon: ArrowLeftRight, label: "Transferler", testId: "nav-transferler" },
   { to: "/raporlar", icon: FileBarChart, label: "Raporlar", testId: "nav-raporlar" },
+  { to: "/devirler", icon: Archive, label: "Devirler", testId: "nav-devirler" },
   { to: "/ayarlar", icon: Settings2, label: "Ayarlar", testId: "nav-ayarlar" },
 ];
 
