@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider, useTheme } from "@/lib/theme";
+import { I18nProvider } from "@/lib/i18n";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -57,16 +58,18 @@ function AppRoutes() {
 
 function App() {
   return (
-    <ThemeProvider>
-      <div className="min-h-screen bg-background text-foreground">
-        <BrowserRouter>
-          <AuthProvider>
-            <AppRoutes />
-          </AuthProvider>
-        </BrowserRouter>
-        <ThemedToaster />
-      </div>
-    </ThemeProvider>
+    <I18nProvider>
+      <ThemeProvider>
+        <div className="min-h-screen bg-background text-foreground">
+          <BrowserRouter>
+            <AuthProvider>
+              <AppRoutes />
+            </AuthProvider>
+          </BrowserRouter>
+          <ThemedToaster />
+        </div>
+      </ThemeProvider>
+    </I18nProvider>
   );
 }
 
