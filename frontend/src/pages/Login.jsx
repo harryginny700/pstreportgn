@@ -12,26 +12,59 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  // 2FA challenge state
+  const [twofaChallenge, setTwofaChallenge] = useState(null); // {challenge_token, email}
+  const [twofaCode, setTwofaCode] = useState("");
+  const { login, completeLogin2FA } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
   const { lang, t, toggle: toggleLang } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const finishLogin = (u) => {
+    toast.success(`${t("login.welcome")}${u.name ? `, ${u.name}` : ""}`);
+    const redirect = location.state?.from || (u.platform_role === "admin" ? "/admin" : "/");
+    navigate(redirect, { replace: true });
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     if (!email || !password) return toast.error(t("login.errRequired"));
     setLoading(true);
     try {
-      const u = await login(email.trim(), password);
-      toast.success(`${t("login.welcome")}${u.name ? `, ${u.name}` : ""}`);
-      const redirect = location.state?.from || (u.platform_role === "admin" ? "/admin" : "/");
-      navigate(redirect, { replace: true });
+      const res = await login(email.trim(), password);
+      if (res && res.requires_2fa) {
+        setTwofaChallenge({ challenge_token: res.challenge_token, email: res.email });
+        setTwofaCode("");
+        return;
+      }
+      finishLogin(res);
     } catch (err) {
       toast.error(err?.response?.data?.detail || t("login.errFailed"));
     } finally {
       setLoading(false);
     }
+  };
+
+  const submit2FA = async (e) => {
+    e.preventDefault();
+    const code = twofaCode.trim().replace(/\s/g, "");
+    if (!/^\d{6}$/.test(code)) return toast.error("6 haneli kodu girin");
+    setLoading(true);
+    try {
+      const u = await completeLogin2FA(twofaChallenge.challenge_token, code);
+      finishLogin(u);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Kod hatalı");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cancel2FA = () => {
+    setTwofaChallenge(null);
+    setTwofaCode("");
+    setPassword("");
   };
 
   return (
@@ -90,7 +123,48 @@ export default function Login() {
 
       {/* Login form */}
       <div className="flex-1 flex items-center justify-center p-8">
-        <form onSubmit={submit} className="w-full max-w-sm" data-testid="login-form">
+        {twofaChallenge ? (
+          <form onSubmit={submit2FA} className="w-full max-w-sm" data-testid="login-2fa-form">
+            <div className="lg:hidden mb-8 flex items-center gap-2">
+              <div className="w-9 h-9 rounded-sm bg-primary flex items-center justify-center">
+                <Activity className="w-5 h-5 text-primary-foreground" strokeWidth={2.5} />
+              </div>
+              <div className="font-display text-lg text-foreground">PLAYSPINTECH</div>
+            </div>
+            <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-2">İki Adımlı Doğrulama</div>
+            <h2 className="font-display text-2xl text-foreground mb-2">6 haneli kodu girin</h2>
+            <p className="text-xs text-muted-foreground mb-6">
+              <span className="font-data">{twofaChallenge.email}</span> için Authenticator uygulamanızdaki mevcut kodu girin.
+            </p>
+            <Input
+              value={twofaCode}
+              onChange={(e) => setTwofaCode(e.target.value.replace(/[^\d]/g, "").slice(0, 6))}
+              className="bg-transparent border-border rounded-sm h-14 text-center font-data text-2xl tracking-[0.5em]"
+              placeholder="000000"
+              autoFocus
+              inputMode="numeric"
+              maxLength={6}
+              data-testid="login-2fa-code"
+            />
+            <Button
+              type="submit"
+              disabled={loading || twofaCode.length !== 6}
+              className="w-full mt-4 rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-11 font-medium tracking-tight active:scale-[0.98] disabled:opacity-60"
+              data-testid="login-2fa-submit"
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Doğrula ve Giriş Yap"}
+            </Button>
+            <button
+              type="button"
+              onClick={cancel2FA}
+              className="w-full mt-4 text-[11px] uppercase tracking-[0.25em] text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="login-2fa-cancel"
+            >
+              ← Farklı hesapla giriş yap
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={submit} className="w-full max-w-sm" data-testid="login-form">
           <div className="lg:hidden mb-8 flex items-center gap-2">
             <div className="w-9 h-9 rounded-sm bg-primary flex items-center justify-center">
               <Activity className="w-5 h-5 text-primary-foreground" strokeWidth={2.5} />
@@ -138,6 +212,7 @@ export default function Login() {
             {t("login.hint")}
           </div>
         </form>
+        )}
       </div>
     </div>
   );

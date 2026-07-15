@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Lock, User as UserIcon, Shield } from "lucide-react";
+import TwoFactorSection from "@/components/TwoFactorSection";
 
 export default function Profile() {
   const { user, site, isAdmin } = useAuth();
@@ -99,6 +100,8 @@ export default function Profile() {
           <Lock className="w-4 h-4" /> {saving ? "Kaydediliyor..." : "Şifreyi Değiştir"}
         </Button>
       </div>
+
+      <TwoFactorSection />
     </div>
   );
 }

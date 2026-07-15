@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Plus, Trash2, Users, Globe, TrendingUp, TrendingDown, Percent, Landmark, ChevronRight, ExternalLink, History, ChevronLeft } from "lucide-react";
+import { Plus, Trash2, Users, Globe, TrendingUp, TrendingDown, Percent, Landmark, ChevronRight, ExternalLink, History, ChevronLeft, ShieldOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 export default function AdminHome() {
@@ -125,6 +125,16 @@ export default function AdminHome() {
       await api.put(`/admin/users/${u.id}`, { active: !u.active });
       loadUsers();
     } catch (e) { toast.error("Hata"); }
+  };
+
+  const reset2FA = async (u) => {
+    if (u.id === user.id) return toast.error("Kendi 2FA'nızı sıfırlayamazsınız — başka admin yapmalı");
+    if (!confirm(`${u.email} kullanıcısının 2FA yapılandırması sıfırlansın mı?`)) return;
+    try {
+      await api.post(`/admin/users/${u.id}/2fa-reset`);
+      toast.success("2FA sıfırlandı");
+      loadUsers();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Hata"); }
   };
 
   const siteMap = Object.fromEntries(sites.map((s) => [s.id, s.name]));
@@ -382,7 +392,8 @@ export default function AdminHome() {
                   <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Site</TableHead>
                   <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Rol</TableHead>
                   <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Durum</TableHead>
-                  <TableHead className="w-40"></TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">2FA</TableHead>
+                  <TableHead className="w-48"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -406,11 +417,29 @@ export default function AdminHome() {
                       </button>
                     </TableCell>
                     <TableCell>
-                      {u.platform_role !== "admin" && (
-                        <Button size="icon" variant="ghost" onClick={() => deleteUser(u)} className="h-8 w-8 rounded-sm text-neutral-500 hover:text-red-400 ml-auto flex" data-testid={`user-delete-${u.email}`}>
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
+                      {u.totp_enabled ? (
+                        <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border text-[hsl(144_100%_55%)] border-[hsl(144_100%_50%)]/40 bg-[hsl(144_100%_50%)]/10" data-testid={`user-2fa-status-${u.email}`}>
+                          Etkin
+                        </span>
+                      ) : (
+                        <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border text-neutral-500 border-neutral-700" data-testid={`user-2fa-status-${u.email}`}>
+                          Kapalı
+                        </span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
+                        {u.totp_enabled && u.id !== user.id && (
+                          <Button size="sm" variant="ghost" onClick={() => reset2FA(u)} className="h-8 rounded-sm text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground gap-1.5 px-2" data-testid={`user-2fa-reset-${u.email}`} title="2FA'yı sıfırla">
+                            <ShieldOff className="w-3.5 h-3.5" /> 2FA Sıfırla
+                          </Button>
+                        )}
+                        {u.platform_role !== "admin" && (
+                          <Button size="icon" variant="ghost" onClick={() => deleteUser(u)} className="h-8 w-8 rounded-sm text-neutral-500 hover:text-red-400" data-testid={`user-delete-${u.email}`}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

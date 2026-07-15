@@ -32,14 +32,37 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const r = await api.post("/auth/login", { email, password });
+    if (r.data.requires_2fa) {
+      // Return the challenge; caller (Login page) will show 2FA screen.
+      return { requires_2fa: true, challenge_token: r.data.challenge_token, email: r.data.email };
+    }
     localStorage.setItem("pst_token", r.data.token);
     setUser(r.data.user);
     setSite(r.data.site);
-    // Reset admin site override on new login
     localStorage.removeItem("pst_admin_site_id");
     setAdminSiteIdState(null);
     return r.data.user;
   };
+
+  const completeLogin2FA = async (challenge_token, code) => {
+    const r = await api.post("/auth/login/2fa", { challenge_token, code });
+    localStorage.setItem("pst_token", r.data.token);
+    setUser(r.data.user);
+    setSite(r.data.site);
+    localStorage.removeItem("pst_admin_site_id");
+    setAdminSiteIdState(null);
+    return r.data.user;
+  };
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await api.get("/auth/me");
+      setUser(r.data.user);
+      setSite(r.data.site);
+    } catch (e) {
+      // ignore
+    }
+  }, []);
 
   const logout = () => {
     localStorage.removeItem("pst_token");
@@ -62,7 +85,7 @@ export function AuthProvider({ children }) {
   const activeSiteId = isAdmin ? adminSiteId : user?.site_id;
 
   return (
-    <AuthCtx.Provider value={{ user, site, loading, login, logout, isAdmin, adminSiteId, setAdminSiteId, activeSiteId }}>
+    <AuthCtx.Provider value={{ user, site, loading, login, completeLogin2FA, refresh, logout, isAdmin, adminSiteId, setAdminSiteId, activeSiteId }}>
       {children}
     </AuthCtx.Provider>
   );

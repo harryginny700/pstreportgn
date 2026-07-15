@@ -71,7 +71,7 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(401, "Oturum süresi dolmuş")
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Geçersiz token")
-    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0, "totp_secret": 0})
     if not user:
         raise HTTPException(401, "Kullanıcı bulunamadı")
     return user
@@ -118,6 +118,9 @@ class User(BaseModel):
     site_id: Optional[str] = None  # site user is scoped to this site
     site_role: Optional[Literal["owner", "operator"]] = None
     active: bool = True
+    totp_secret: Optional[str] = None
+    totp_enabled: bool = False
+    totp_enabled_at: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -394,14 +397,134 @@ async def login(inp: LoginInput):
     # Success: clear attempts
     LOGIN_ATTEMPTS.pop(email, None)
 
+    # 2FA challenge (if enabled)
+    if user.get("totp_enabled"):
+        challenge = jwt.encode({
+            "sub": user["id"],
+            "type": "2fa_challenge",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+        }, JWT_SECRET, algorithm=JWT_ALGORITHM)
+        return {"requires_2fa": True, "challenge_token": challenge, "email": user["email"]}
+
     token = create_token(user["id"])
     user.pop("_id", None)
     user.pop("password_hash", None)
+    user.pop("totp_secret", None)
     site = None
     if user.get("site_id"):
         site = await db.sites.find_one({"id": user["site_id"]}, {"_id": 0})
     await log_audit(user, "auth.login", "user", user["id"], target_name=user["email"], site_id=user.get("site_id"))
     return {"token": token, "user": user, "site": site}
+
+
+class TOTPVerifyInput(BaseModel):
+    challenge_token: str
+    code: str
+
+
+@api_router.post("/auth/login/2fa")
+async def verify_login_2fa(inp: TOTPVerifyInput):
+    """Second step of 2FA login: verify TOTP code against challenge token → issue JWT."""
+    try:
+        payload = jwt.decode(inp.challenge_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "2fa_challenge":
+            raise HTTPException(401, "Geçersiz doğrulama token'ı")
+        user_id = payload["sub"]
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Doğrulama süresi doldu, tekrar giriş yapın")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Geçersiz doğrulama token'ı")
+
+    user = await db.users.find_one({"id": user_id})
+    if not user or not user.get("totp_enabled") or not user.get("totp_secret"):
+        raise HTTPException(401, "2FA yapılandırılmamış")
+
+    import pyotp
+    totp = pyotp.TOTP(user["totp_secret"])
+    code = (inp.code or "").strip().replace(" ", "")
+    if not totp.verify(code, valid_window=1):
+        raise HTTPException(401, "Kod hatalı veya süresi dolmuş")
+
+    token = create_token(user["id"])
+    user.pop("_id", None)
+    user.pop("password_hash", None)
+    user.pop("totp_secret", None)
+    site = None
+    if user.get("site_id"):
+        site = await db.sites.find_one({"id": user["site_id"]}, {"_id": 0})
+    await log_audit(user, "auth.login_2fa", "user", user["id"], target_name=user["email"], site_id=user.get("site_id"))
+    return {"token": token, "user": user, "site": site}
+
+
+class TOTPSetupVerifyInput(BaseModel):
+    code: str
+
+
+@api_router.post("/auth/2fa/setup")
+async def totp_setup(user: dict = Depends(get_current_user)):
+    """Start 2FA setup: generate new secret, provisioning URI + QR (as data URL). Does NOT enable until verified."""
+    import pyotp, qrcode, io, base64
+    secret = pyotp.random_base32()
+    # Store the pending secret; will only mark enabled after verify-setup succeeds.
+    await db.users.update_one({"id": user["id"]}, {"$set": {"totp_secret": secret, "totp_enabled": False}})
+    issuer = "Playspintech"
+    label = user["email"]
+    uri = pyotp.TOTP(secret).provisioning_uri(name=label, issuer_name=issuer)
+    # Generate QR PNG data URL
+    img = qrcode.make(uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+    return {"secret": secret, "provisioning_uri": uri, "qr_data_url": f"data:image/png;base64,{qr_b64}"}
+
+
+@api_router.post("/auth/2fa/verify-setup")
+async def totp_verify_setup(inp: TOTPSetupVerifyInput, user: dict = Depends(get_current_user)):
+    """Verify the code produced by the pending secret; if valid, mark 2FA as enabled."""
+    fresh = await db.users.find_one({"id": user["id"]})
+    if not fresh or not fresh.get("totp_secret"):
+        raise HTTPException(400, "Önce 2FA kurulumunu başlatın")
+    import pyotp
+    totp = pyotp.TOTP(fresh["totp_secret"])
+    code = (inp.code or "").strip().replace(" ", "")
+    if not totp.verify(code, valid_window=1):
+        raise HTTPException(400, "Kod hatalı — QR'ı doğru taradığınızdan emin olun")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": {"totp_enabled": True, "totp_enabled_at": now}})
+    await log_audit(user, "auth.2fa_enable", "user", user["id"], target_name=user["email"], site_id=user.get("site_id"))
+    return {"ok": True}
+
+
+class TOTPDisableInput(BaseModel):
+    current_password: str
+
+
+@api_router.post("/auth/2fa/disable")
+async def totp_disable(inp: TOTPDisableInput, user: dict = Depends(get_current_user)):
+    """Disable 2FA for the current user. Admins with mandatory 2FA cannot self-disable."""
+    fresh = await db.users.find_one({"id": user["id"]})
+    if not fresh or not fresh.get("totp_enabled"):
+        raise HTTPException(400, "2FA zaten kapalı")
+    if not verify_password(inp.current_password, fresh["password_hash"]):
+        raise HTTPException(401, "Mevcut şifre hatalı")
+    if user.get("platform_role") == "admin":
+        raise HTTPException(403, "Admin hesaplarında 2FA zorunludur. Devre dışı bırakmak için başka bir adminden sıfırlamasını isteyin.")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"totp_enabled": False, "totp_secret": None, "totp_enabled_at": None}})
+    await log_audit(user, "auth.2fa_disable", "user", user["id"], target_name=user["email"], site_id=user.get("site_id"))
+    return {"ok": True}
+
+
+@api_router.post("/admin/users/{uid_}/2fa-reset")
+async def admin_reset_2fa(uid_: str, user: dict = Depends(require_admin)):
+    """Admin-only: clear another user's TOTP config, forcing them to re-set up (or removing it for non-admins)."""
+    target = await db.users.find_one({"id": uid_})
+    if not target:
+        raise HTTPException(404, "Kullanıcı bulunamadı")
+    if target["id"] == user["id"]:
+        raise HTTPException(400, "Kendi 2FA'nızı sıfırlamak için başka bir admin gerekli")
+    await db.users.update_one({"id": uid_}, {"$set": {"totp_enabled": False, "totp_secret": None, "totp_enabled_at": None}})
+    await log_audit(user, "auth.2fa_reset", "user", uid_, target_name=target["email"], site_id=target.get("site_id"))
+    return {"ok": True}
 
 
 @api_router.get("/auth/me")
@@ -713,14 +836,21 @@ async def delete_site_credit(cid: str, user: dict = Depends(require_admin)):
 
 @api_router.get("/site-credits/mine")
 async def list_my_site_credits(user: dict = Depends(get_current_user), site_id: Optional[str] = None):
-    """Read-only list of the current (or admin-viewed) site's credits."""
+    """Read-only list of the current (or admin-viewed) site's credits. Excludes archived."""
     if user.get("platform_role") == "admin":
         sid = site_id
     else:
         sid = user.get("site_id")
     if not sid:
         return []
-    docs = await db.site_credits.find({"site_id": sid}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    docs = await db.site_credits.find(
+        {"site_id": sid, "archived": {"$ne": True}},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    for c in docs:
+        c.setdefault("paid_amount", 0.0 if c.get("status") != "paid" else float(c.get("debt", 0)))
+        c.setdefault("payments", [])
+        c["remaining_debt"] = max(0.0, round(float(c.get("debt", 0)) - float(c.get("paid_amount", 0)), 2))
     return docs
 
 
@@ -730,7 +860,7 @@ async def list_my_site_credits(user: dict = Depends(get_current_user), site_id: 
 
 @api_router.get("/admin/users")
 async def list_users(user: dict = Depends(require_admin)):
-    docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", 1).to_list(1000)
+    docs = await db.users.find({}, {"_id": 0, "password_hash": 0, "totp_secret": 0}).sort("created_at", 1).to_list(1000)
     return docs
 
 

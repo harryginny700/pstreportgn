@@ -16,6 +16,7 @@ import Reports from "@/pages/Reports";
 import Settings from "@/pages/Settings";
 import AdminHome from "@/pages/AdminHome";
 import AdminCredits from "@/pages/AdminCredits";
+import ReceivedCredits from "@/pages/ReceivedCredits";
 import Profile from "@/pages/Profile";
 import Rollovers from "@/pages/Rollovers";
 import { Loader2 } from "lucide-react";
@@ -44,6 +45,7 @@ function AppRoutes() {
         <Route path="/gunluk" element={<DailyEntry />} />
         <Route path="/kasalar" element={<CashRegisters />} />
         <Route path="/krediler" element={<Credits />} />
+        <Route path="/alinan-krediler" element={<ReceivedCredits />} />
         <Route path="/giderler" element={<Expenses />} />
         <Route path="/transferler" element={<Transfers />} />
         <Route path="/raporlar" element={<Reports />} />

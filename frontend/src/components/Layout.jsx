@@ -34,6 +34,7 @@ const siteNav = [
   { to: "/gunluk", icon: CalendarClock, labelKey: "nav.daily", testId: "nav-daily" },
   { to: "/kasalar", icon: Wallet, labelKey: "nav.kasalar", testId: "nav-kasalar" },
   { to: "/krediler", icon: Coins, labelKey: "nav.krediler", testId: "nav-krediler" },
+  { to: "/alinan-krediler", icon: HandCoins, labelKey: "nav.receivedCredits", testId: "nav-received-credits" },
   { to: "/giderler", icon: Receipt, labelKey: "nav.giderler", testId: "nav-giderler" },
   { to: "/transferler", icon: ArrowLeftRight, labelKey: "nav.transferler", testId: "nav-transferler" },
   { to: "/raporlar", icon: FileBarChart, labelKey: "nav.raporlar", testId: "nav-raporlar" },
