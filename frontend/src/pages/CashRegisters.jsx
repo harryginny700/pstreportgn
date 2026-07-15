@@ -4,12 +4,13 @@ import { fmtTRY } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Wallet, Send, Loader2 } from "lucide-react";
+import { Wallet, Send } from "lucide-react";
+import TelegramPreviewDialog from "@/components/TelegramPreviewDialog";
 
 export default function CashRegisters() {
   const [balances, setBalances] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -20,18 +21,6 @@ export default function CashRegisters() {
       toast.error("Yüklenemedi");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const sendTelegram = async () => {
-    setSending(true);
-    try {
-      await api.post("/kasalar/send-telegram");
-      toast.success("Kasalar Telegram grubuna gönderildi");
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Gönderilemedi");
-    } finally {
-      setSending(false);
     }
   };
 
@@ -53,12 +42,12 @@ export default function CashRegisters() {
             </div>
           </div>
           <Button
-            onClick={sendTelegram}
-            disabled={sending || loading || balances.length === 0}
+            onClick={() => setPreviewOpen(true)}
+            disabled={loading || balances.length === 0}
             className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95 disabled:opacity-60"
             data-testid="kasalar-send-telegram"
           >
-            {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            <Send className="w-3.5 h-3.5" />
             Kasaları Gönder
           </Button>
         </div>
@@ -95,6 +84,14 @@ export default function CashRegisters() {
       </div>
 
       {loading && <div className="text-xs text-neutral-500 font-data">Yükleniyor...</div>}
+
+      <TelegramPreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        title="Kasalar — Telegram Önizleme"
+        previewUrl="/kasalar/telegram-preview"
+        sendUrl="/kasalar/send-telegram"
+      />
     </div>
   );
 }

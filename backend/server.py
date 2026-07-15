@@ -1498,11 +1498,11 @@ def _fmt_kasalar_message(site_name: str, balances: list) -> str:
 
 @api_router.post("/reports/daily/send-telegram")
 async def send_daily_telegram(date_str: str = Query(..., alias="date"),
+                              site_id: Optional[str] = None,
                               user: dict = Depends(get_current_user)):
     """Fetch daily report and send stat blocks (right column) to configured Telegram group."""
-    if user.get("platform_role") == "admin":
-        raise HTTPException(400, "Bu endpoint sadece site kullanıcıları içindir. Admin'in bir site'ı yok.")
-    site = await db.sites.find_one({"id": user["site_id"]}, {"_id": 0})
+    sid = _resolve_target_site(user, site_id)
+    site = await db.sites.find_one({"id": sid}, {"_id": 0})
     if not site:
         raise HTTPException(404, "Site bulunamadı")
     token = site.get("telegram_bot_token")
@@ -1510,7 +1510,7 @@ async def send_daily_telegram(date_str: str = Query(..., alias="date"),
     if not token or not chat_id:
         raise HTTPException(400, "Bu site için Telegram bot token'ı ve grup ID'si tanımlı değil. Ayarlar → Telegram bölümünden ekleyin.")
 
-    data = await report_daily(date_str, None, user)
+    data = await report_daily(date_str, site_id, user)
     msg = _fmt_daily_message(site["name"], date_str, data)
 
     # Send via Telegram HTTP API
@@ -1533,17 +1533,31 @@ async def send_daily_telegram(date_str: str = Query(..., alias="date"),
     except Exception as e:
         raise HTTPException(502, f"Telegram bağlantı hatası: {e}")
 
-    await log_audit(user, "telegram.send_daily", "site", user["site_id"],
-                    site_id=user["site_id"], details={"date": date_str})
+    await log_audit(user, "telegram.send_daily", "site", sid,
+                    site_id=sid, details={"date": date_str})
     return {"ok": True}
 
 
+@api_router.get("/reports/daily/telegram-preview")
+async def preview_daily_telegram(date_str: str = Query(..., alias="date"),
+                                 site_id: Optional[str] = None,
+                                 user: dict = Depends(get_current_user)):
+    """Return the formatted daily Telegram message without sending."""
+    sid = _resolve_target_site(user, site_id)
+    site = await db.sites.find_one({"id": sid}, {"_id": 0})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+    data = await report_daily(date_str, site_id, user)
+    msg = _fmt_daily_message(site["name"], date_str, data)
+    return {"message": msg, "configured": bool(site.get("telegram_bot_token") and site.get("telegram_chat_id"))}
+
+
 @api_router.post("/kasalar/send-telegram")
-async def send_kasalar_telegram(user: dict = Depends(get_current_user)):
+async def send_kasalar_telegram(site_id: Optional[str] = None,
+                                user: dict = Depends(get_current_user)):
     """Send current Kasalar snapshot to the site's configured Telegram group."""
-    if user.get("platform_role") == "admin":
-        raise HTTPException(400, "Bu endpoint sadece site kullanıcıları içindir. Admin'in bir site'ı yok.")
-    site = await db.sites.find_one({"id": user["site_id"]}, {"_id": 0})
+    sid = _resolve_target_site(user, site_id)
+    site = await db.sites.find_one({"id": sid}, {"_id": 0})
     if not site:
         raise HTTPException(404, "Site bulunamadı")
     token = site.get("telegram_bot_token")
@@ -1551,7 +1565,7 @@ async def send_kasalar_telegram(user: dict = Depends(get_current_user)):
     if not token or not chat_id:
         raise HTTPException(400, "Bu site için Telegram bot token'ı ve grup ID'si tanımlı değil. Ayarlar → Telegram bölümünden ekleyin.")
 
-    balances = await compute_balances_for_site(user["site_id"])
+    balances = await compute_balances_for_site(sid)
     msg = _fmt_kasalar_message(site["name"], balances)
 
     import httpx
@@ -1573,9 +1587,22 @@ async def send_kasalar_telegram(user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(502, f"Telegram bağlantı hatası: {e}")
 
-    await log_audit(user, "telegram.send_kasalar", "site", user["site_id"],
-                    site_id=user["site_id"], details={"count": len(balances)})
+    await log_audit(user, "telegram.send_kasalar", "site", sid,
+                    site_id=sid, details={"count": len(balances)})
     return {"ok": True}
+
+
+@api_router.get("/kasalar/telegram-preview")
+async def preview_kasalar_telegram(site_id: Optional[str] = None,
+                                   user: dict = Depends(get_current_user)):
+    """Return the formatted Kasalar Telegram message without sending."""
+    sid = _resolve_target_site(user, site_id)
+    site = await db.sites.find_one({"id": sid}, {"_id": 0})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+    balances = await compute_balances_for_site(sid)
+    msg = _fmt_kasalar_message(site["name"], balances)
+    return {"message": msg, "configured": bool(site.get("telegram_bot_token") and site.get("telegram_chat_id"))}
 
 
 # ============== ROLLOVERS (Aylık Devir) ==============

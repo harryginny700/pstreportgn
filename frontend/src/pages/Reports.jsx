@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Download, FileText, ArrowRight, TrendingUp, TrendingDown, Percent, Wallet, Receipt, Landmark, Coins, ArrowLeftRight, Scale, PlusCircle, MinusCircle, Users, CreditCard, PiggyBank, Sparkles, Archive, Loader2, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import TelegramPreviewDialog from "@/components/TelegramPreviewDialog";
 
 const MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 
@@ -421,29 +422,25 @@ function StatRow({ label, value, tone, bold = false, highlight = false, icon: Ic
 }
 
 function TelegramSendButton({ date }) {
-  const [sending, setSending] = useState(false);
-  const send = async () => {
-    if (!confirm(`${date} tarihli günlük rapor Telegram grubuna gönderilecek. Emin misiniz?`)) return;
-    setSending(true);
-    try {
-      await api.post(`/reports/daily/send-telegram?date=${date}`);
-      toast.success("Telegram grubuna gönderildi");
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Gönderim hatası");
-    } finally {
-      setSending(false);
-    }
-  };
+  const [open, setOpen] = useState(false);
   return (
-    <Button
-      onClick={send}
-      disabled={sending}
-      className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95 disabled:opacity-60"
-      data-testid="telegram-send"
-    >
-      {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-      Telegram'a Gönder
-    </Button>
+    <>
+      <Button
+        onClick={() => setOpen(true)}
+        className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95 disabled:opacity-60"
+        data-testid="telegram-send"
+      >
+        <Send className="w-4 h-4" />
+        Telegram'a Gönder
+      </Button>
+      <TelegramPreviewDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={`Günlük Rapor (${date}) — Telegram Önizleme`}
+        previewUrl={`/reports/daily/telegram-preview?date=${date}`}
+        sendUrl={`/reports/daily/send-telegram?date=${date}`}
+      />
+    </>
   );
 }
 
