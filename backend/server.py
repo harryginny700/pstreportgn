@@ -1098,10 +1098,44 @@ async def report_daily(
     creds = await db.credits.find(q, {"_id": 0}).to_list(1000)
     trs = await db.transfers.find(q, {"_id": 0}).to_list(1000)
 
+    # Enrich with lookup data
+    site_q = {"site_id": q["site_id"]} if "site_id" in q else {}
+    pms = await db.payment_methods.find(site_q, {"_id": 0}).sort("order", 1).to_list(1000)
+    kasalar = await db.cash_registers.find(site_q, {"_id": 0}).to_list(1000)
+    kasa_map = {k["id"]: k["name"] for k in kasalar}
+    pm_map = {p["id"]: p for p in pms}
+
+    # Build per-payment-method rows in the site's configured order (include zero rows)
+    tx_by_pm = {t["payment_method_id"]: t for t in txs}
+    pm_rows = []
+    for pm in pms:
+        t = tx_by_pm.get(pm["id"])
+        pm_rows.append({
+            "payment_method_id": pm["id"],
+            "name": pm["name"],
+            "deposit": t["deposit"] if t else 0.0,
+            "withdrawal": t["withdrawal"] if t else 0.0,
+            "commission": t["commission"] if t else 0.0,
+            "net": t["net"] if t else 0.0,
+        })
+
+    # Enrich transfers with kasa names
+    for t in trs:
+        t["from_name"] = kasa_map.get(t["from_cash_register_id"], "?")
+        t["to_name"] = kasa_map.get(t["to_cash_register_id"], "?")
+
+    # Enrich expenses with kasa names
+    for e in exps:
+        e["cash_register_name"] = kasa_map.get(e["cash_register_id"], "-")
+
     return {
         "date": date_str,
         "summary": {**tx_agg, "expense": ex, "credit_added": cr["added"], "credit_paid": cr["paid"], "profit_loss": round(tx_agg["net"] - ex, 2)},
-        "transactions": txs, "expenses": exps, "credits": creds, "transfers": trs,
+        "transactions": txs,
+        "expenses": exps,
+        "credits": creds,
+        "transfers": trs,
+        "payment_method_rows": pm_rows,
     }
 
 
