@@ -1282,10 +1282,6 @@ async def _seed_default_site_data(site_id: str):
                             withdrawal_commission_pct=wd, order=i)
         await db.payment_methods.insert_one(obj.model_dump())
 
-    for i, name in enumerate(["OKİCEY", "MARDİNLİ47", "KEMALGEZER", "MUTOK35"]):
-        obj = Debtor(site_id=site_id, name=name, order=i)
-        await db.debtors.insert_one(obj.model_dump())
-
 
 @api_router.post("/admin/sites/{sid}/seed-defaults")
 async def seed_defaults(sid: str, user: dict = Depends(require_admin)):
