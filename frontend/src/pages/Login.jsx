@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
+import { useI18n } from "@/lib/i18n";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -13,20 +14,21 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
+  const { lang, t, toggle: toggleLang } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!email || !password) return toast.error("E-posta ve şifre gerekli");
+    if (!email || !password) return toast.error(t("login.errRequired"));
     setLoading(true);
     try {
       const u = await login(email.trim(), password);
-      toast.success(`Hoş geldin${u.name ? `, ${u.name}` : ""}`);
+      toast.success(`${t("login.welcome")}${u.name ? `, ${u.name}` : ""}`);
       const redirect = location.state?.from || (u.platform_role === "admin" ? "/admin" : "/");
       navigate(redirect, { replace: true });
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Giriş başarısız");
+      toast.error(err?.response?.data?.detail || t("login.errFailed"));
     } finally {
       setLoading(false);
     }
@@ -34,15 +36,26 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex relative" data-testid="login-page">
-      {/* Theme toggle */}
-      <button
-        onClick={toggleTheme}
-        aria-label="Tema değiştir"
-        data-testid="theme-toggle-login"
-        className="absolute top-6 right-6 z-10 w-9 h-9 rounded-sm border border-border hover:bg-secondary flex items-center justify-center transition-colors active:scale-95"
-      >
-        {theme === "dark" ? <Sun className="w-4 h-4 text-primary" /> : <Moon className="w-4 h-4 text-primary" />}
-      </button>
+      {/* Top-right controls */}
+      <div className="absolute top-6 right-6 z-10 flex items-center gap-2">
+        <button
+          onClick={toggleLang}
+          aria-label={t("lang.toggle", "Dil değiştir")}
+          data-testid="lang-toggle"
+          title={lang === "tr" ? "Switch to English" : "Türkçe'ye geç"}
+          className="h-9 px-3 rounded-sm border border-border hover:bg-secondary flex items-center justify-center transition-colors active:scale-95 font-data text-[11px] uppercase tracking-[0.15em] text-foreground"
+        >
+          {lang === "tr" ? "TR" : "EN"}
+        </button>
+        <button
+          onClick={toggleTheme}
+          aria-label={t("theme.toggle", "Tema değiştir")}
+          data-testid="theme-toggle-login"
+          className="w-9 h-9 rounded-sm border border-border hover:bg-secondary flex items-center justify-center transition-colors active:scale-95"
+        >
+          {theme === "dark" ? <Sun className="w-4 h-4 text-primary" /> : <Moon className="w-4 h-4 text-primary" />}
+        </button>
+      </div>
       {/* Brand panel */}
       <div className="hidden lg:flex flex-col justify-between w-1/2 border-r border-border p-12 bg-gradient-to-br from-background to-secondary relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{
@@ -60,14 +73,14 @@ export default function Login() {
           </div>
         </div>
         <div className="relative">
-          <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-3">Bugünkü modül</div>
+          <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-3">{t("login.today")}</div>
           <h1 className="font-display text-4xl lg:text-5xl font-light text-foreground leading-[1.05] tracking-tight mb-6">
-            Sitelerin<br/>
-            <span className="text-primary">finansal kontrolü</span><br/>
-            tek panelde.
+            {t("login.brandLine1")}<br/>
+            <span className="text-primary">{t("login.brandLine2")}</span><br/>
+            {t("login.brandLine3")}
           </h1>
           <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
-            Yatırım, çekim, komisyon, kredi, kasa transferleri ve giderler — tüm siteler için canlı takip, günlük ve aylık raporlar, CSV çıktı.
+            {t("login.brandDesc")}
           </p>
         </div>
         <div className="relative text-[10px] uppercase tracking-[0.3em] text-muted-foreground font-data">
@@ -85,12 +98,12 @@ export default function Login() {
             <div className="font-display text-lg text-foreground">PLAYSPINTECH</div>
           </div>
 
-          <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-2">Giriş</div>
-          <h2 className="font-display text-2xl text-foreground mb-8">Hesabınıza girin</h2>
+          <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-2">{t("login.subtitle")}</div>
+          <h2 className="font-display text-2xl text-foreground mb-8">{t("login.title")}</h2>
 
           <div className="space-y-4">
             <div>
-              <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">E-posta</label>
+              <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">{t("login.email")}</label>
               <Input
                 type="email"
                 value={email}
@@ -101,7 +114,7 @@ export default function Login() {
               />
             </div>
             <div>
-              <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Şifre</label>
+              <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">{t("login.password")}</label>
               <Input
                 type="password"
                 value={password}
@@ -118,11 +131,11 @@ export default function Login() {
             className="w-full mt-6 rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-11 font-medium tracking-tight active:scale-[0.98] disabled:opacity-60"
             data-testid="login-submit"
           >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Giriş Yap"}
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : t("login.submit")}
           </Button>
 
           <div className="mt-8 text-[10px] uppercase tracking-[0.25em] text-muted-foreground text-center">
-            Hesap oluşturma yetkisi sadece Playspintech admin'dedir
+            {t("login.hint")}
           </div>
         </form>
       </div>
