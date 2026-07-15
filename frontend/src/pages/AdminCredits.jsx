@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { HandCoins, Plus, Trash2, Check, RotateCcw, Loader2, Percent, Landmark, Send, Archive, ArchiveRestore } from "lucide-react";
+import { HandCoins, Plus, Trash2, Check, RotateCcw, Loader2, Percent, Landmark, Send, Archive, ArchiveRestore, Bell } from "lucide-react";
 
 export default function AdminCredits() {
   const [sites, setSites] = useState([]);
@@ -24,6 +24,7 @@ export default function AdminCredits() {
   const [payTarget, setPayTarget] = useState(null); // credit row
   const [payForm, setPayForm] = useState({ amount: "", date: "", note: "" });
   const [paying, setPaying] = useState(false);
+  const [reminding, setReminding] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -138,6 +139,19 @@ export default function AdminCredits() {
     }
   };
 
+  const sendReminders = async () => {
+    if (!confirm("Telegram konfigüre edilmiş ve ödenmemiş borcu olan tüm sitelere hatırlatma gönderilsin mi?")) return;
+    setReminding(true);
+    try {
+      const r = await api.post("/admin/site-credits/send-reminders");
+      toast.success(`${r.data.sent} site'a hatırlatma gönderildi (${r.data.skipped_no_debt} site borçsuz)`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gönderilemedi");
+    } finally {
+      setReminding(false);
+    }
+  };
+
   const archive = async (row) => {
     const next = !row.archived;
     if (next && !confirm(`${row.site_name} — ${fmtTRY(row.amount)} kredisi arşivlensin mi?`)) return;
@@ -204,9 +218,22 @@ export default function AdminCredits() {
             <Archive className="w-3.5 h-3.5" /> {viewArchived ? "Arşivi gizle" : "Arşivi göster"}
           </Button>
         </div>
-        <Button onClick={openAdd} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95" data-testid="ac-add-btn">
-          <Plus className="w-3.5 h-3.5" /> Yeni Kredi
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={sendReminders}
+            disabled={reminding}
+            variant="ghost"
+            className="rounded-sm border border-border h-9 gap-2 active:scale-95 text-xs"
+            data-testid="ac-send-reminders-btn"
+            title="Tüm sitelere ödenmemiş borç hatırlatması gönder"
+          >
+            {reminding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />}
+            Hatırlatma Gönder
+          </Button>
+          <Button onClick={openAdd} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95" data-testid="ac-add-btn">
+            <Plus className="w-3.5 h-3.5" /> Yeni Kredi
+          </Button>
+        </div>
       </div>
 
       {/* Table */}

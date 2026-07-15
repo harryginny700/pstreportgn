@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import asyncio
 import logging
 import uuid
 import io
@@ -821,6 +822,14 @@ async def archive_site_credit(cid: str, archived: bool = Query(True), user: dict
     site = await db.sites.find_one({"id": doc["site_id"]}, {"_id": 0, "name": 1})
     doc["site_name"] = site.get("name") if site else "?"
     return doc
+
+
+@api_router.post("/admin/site-credits/send-reminders")
+async def trigger_credit_reminders(user: dict = Depends(require_admin)):
+    """Manually trigger credit reminders for all sites (same task as daily 10:00 job)."""
+    result = await _send_all_credit_reminders()
+    await log_audit(user, "site_credit.reminders_sent", "system", "reminders", details=result)
+    return result
 
 
 @api_router.delete("/admin/site-credits/{cid}")
@@ -1926,6 +1935,73 @@ def _fmt_credit_payment_message(site_name: str, credit: dict, payment_amount: fl
     return "\n".join(L)
 
 
+def _fmt_credit_reminder_message(site_name: str, unpaid: list) -> str:
+    """Daily reminder for a site's unpaid + partial credits."""
+    L = [f"⏰ *{site_name}* — Ödenmemiş Kredi Hatırlatması", ""]
+    total_remaining = 0.0
+    for c in unpaid:
+        debt = float(c.get("debt", 0))
+        paid = float(c.get("paid_amount", 0))
+        remaining = max(0.0, round(debt - paid, 2))
+        total_remaining += remaining
+        tag = "🟡 KISMI" if c.get("status") == "partial" else "🔴 ÖDENMEDİ"
+        L.append(f"• `{c.get('date')}` · Kredi `{_fmt_try(c.get('amount', 0))}`")
+        L.append(f"  Borç `{_fmt_try(debt)}` · Ödenmiş `{_fmt_try(paid)}` · Kalan `{_fmt_try(remaining)}`  {tag}")
+    L.append("")
+    L.append("━━━━━━━━━━━━━━━━━━━")
+    L.append(f"💰 *Toplam Kalan Borç:*  `{_fmt_try(round(total_remaining, 2))}`")
+    L.append("_Playspintech tarafından günlük otomatik hatırlatma._")
+    return "\n".join(L)
+
+
+async def _send_all_credit_reminders() -> dict:
+    """Send unpaid-credit reminder to every site with Telegram configured + open credits."""
+    sites = await db.sites.find({
+        "telegram_bot_token": {"$nin": [None, ""]},
+        "telegram_chat_id": {"$nin": [None, ""]},
+    }, {"_id": 0}).to_list(500)
+    sent = 0
+    skipped = 0
+    for site in sites:
+        docs = await db.site_credits.find({
+            "site_id": site["id"],
+            "archived": {"$ne": True},
+            "status": {"$in": ["unpaid", "partial"]},
+        }, {"_id": 0}).sort("created_at", 1).to_list(500)
+        if not docs:
+            skipped += 1
+            continue
+        try:
+            await _telegram_send_safe(site, _fmt_credit_reminder_message(site["name"], docs))
+            sent += 1
+        except Exception as e:
+            logging.warning(f"[reminder] Send failed for site {site.get('id')}: {e}")
+    return {"sent": sent, "skipped_no_debt": skipped, "total_configured_sites": len(sites)}
+
+
+async def _daily_reminder_loop():
+    """Background task: send reminders once per day at 10:00 Europe/Istanbul (07:00 UTC)."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            target = now.replace(hour=7, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            sleep_sec = (target - now).total_seconds()
+            logging.info(f"[reminder] Next daily reminder in {int(sleep_sec / 60)} min at {target.isoformat()}")
+            await asyncio.sleep(sleep_sec)
+            result = await _send_all_credit_reminders()
+            logging.info(f"[reminder] Sent: {result}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logging.error(f"[reminder] Loop error: {e}")
+            await asyncio.sleep(300)  # retry in 5 min
+
+
+
+
+
 
 
 
@@ -2279,7 +2355,17 @@ async def _startup():
     except Exception as e:
         logger.error(f"Seed/migrate hatası: {e}")
 
+    # Start daily credit-reminder background task
+    app.state.reminder_task = asyncio.create_task(_daily_reminder_loop())
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    task = getattr(app.state, "reminder_task", None)
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     client.close()
