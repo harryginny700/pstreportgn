@@ -1407,52 +1407,70 @@ def _fmt_daily_message(site_name: str, date_str: str, data: dict) -> str:
     total_com = sum(r["commission"] for r in pm_rows)
     total_net = sum(r["net"] for r in pm_rows)
     member_delta = total_dep - total_wd
-    manuel_delta = (s.get("credit_added") or 0) - (s.get("credit_paid") or 0)
+    manuel_added = s.get("credit_added") or 0
+    manuel_paid = s.get("credit_paid") or 0
+    manuel_delta = manuel_added - manuel_paid
     expense = s.get("expense") or 0
     pnl = s.get("profit_loss", 0)
 
-    lines = []
-    lines.append(f"📊 *{site_name}* — Günlük Rapor")
-    lines.append(f"🗓️ {date_str}")
-    lines.append("")
-    lines.append("*━━━ SİTE ÜYELERİ ━━━*")
-    lines.append(f"📈 Yatırım: `{_fmt_try(total_dep)}`")
-    lines.append(f"📉 Çekim: `{_fmt_try(total_wd)}`")
-    lines.append(f"💸 Ödenen Komisyon: `{_fmt_try(total_com)}`")
-    lines.append(f"🏦 Günlük Kalan: `{_fmt_try(total_net)}`")
-    lines.append(f"⚖️ Y-Ç Farkı: `{_fmt_try(member_delta)}`")
-    lines.append("")
-    lines.append("*━━━ MANUELLER ━━━*")
-    lines.append(f"➕ Eklenen: `{_fmt_try(s.get('credit_added') or 0)}`")
-    lines.append(f"➖ Ödenen: `{_fmt_try(s.get('credit_paid') or 0)}`")
-    lines.append(f"⚖️ Fark: `{_fmt_try(manuel_delta)}`")
-    lines.append("")
-    lines.append("*━━━ SİTE TOPLAMLARI ━━━*")
-    lines.append(f"📈 Toplam Yatırım: `{_fmt_try(total_dep)}`")
-    lines.append(f"📉 Toplam Çekim: `{_fmt_try(total_wd)}`")
-    lines.append(f"🧾 Yapılan Ödemeler: `{_fmt_try(expense)}`")
+    L = []
+    L.append(f"📊 *{site_name}* — Günlük Rapor")
+    L.append(f"🗓️ {date_str}")
+    L.append("")
 
+    # ── Site Üyeleri ──
+    L.append("👥 *SİTE ÜYELERİ*")
+    L.append(f"  📈 Site Üyeleri Yatırım:  `{_fmt_try(total_dep)}`")
+    L.append(f"  📉 Site Üyeleri Çekim:  `{_fmt_try(total_wd)}`")
+    L.append(f"  💸 Toplam Ödenen Komisyon:  `{_fmt_try(total_com)}`")
+    L.append(f"  🏦 Site Üyeleri Günlük Kalan:  `{_fmt_try(total_net)}`")
+    L.append(f"  ⚖️ Üyeler Yatırım-Çekim Farkı:  `{_fmt_try(member_delta)}`")
+    L.append("")
+
+    # ── Manueller ──
+    L.append("🪙 *MANUELLER*")
+    L.append(f"  ➕ Eklenen Manuel Toplamı:  `{_fmt_try(manuel_added)}`")
+    L.append(f"  ➖ Ödenen Manuel Toplamı:  `{_fmt_try(manuel_paid)}`")
+    L.append(f"  ⚖️ Manueller Fark:  `{_fmt_try(manuel_delta)}`")
+    L.append("")
+
+    # ── Site Toplamları ──
+    L.append("💼 *SİTE TOPLAMLARI*")
+    L.append(f"  📈 Toplam Site Yatırım:  `{_fmt_try(total_dep)}`")
+    L.append(f"  📉 Toplam Site Çekim:  `{_fmt_try(total_wd)}`")
+    L.append(f"  🧾 Yapılan Ödemeler:  `{_fmt_try(expense)}`")
+    L.append("")
+
+    # ── Kasalar Arası Transfer ──
     transfers = data.get("transfers", [])
+    L.append("🔄 *KASALAR ARASI TRANSFER*")
     if transfers:
-        lines.append("")
-        lines.append("*━━━ KASALAR ARASI TRANSFER ━━━*")
         for t in transfers:
-            lines.append(f"🔄 {t.get('from_name', '?')} → {t.get('to_name', '?')}: `{_fmt_try(t['amount'])}`")
+            frm = t.get("from_name", "?")
+            to = t.get("to_name", "?")
+            L.append(f"  🔁 {frm} → {to}:  `{_fmt_try(t['amount'])}`")
+    else:
+        L.append("  _Transfer yok_")
+    L.append("")
 
+    # ── Yapılan Ödemeler ──
     expenses = data.get("expenses", [])
+    L.append("🧾 *YAPILAN ÖDEMELER*")
     if expenses:
-        lines.append("")
-        lines.append("*━━━ YAPILAN ÖDEMELER ━━━*")
         for e in expenses:
-            desc = (e.get("description") or "").replace("*", "").replace("_", "")[:40]
+            desc = (e.get("description") or "").replace("*", "").replace("_", "").replace("`", "")[:40]
             kasa = e.get("cash_register_name", "-")
-            lines.append(f"• {desc} ({kasa}): `{_fmt_try(e['amount'])}`")
+            L.append(f"  • {desc} — {kasa}:  `{_fmt_try(e['amount'])}`")
+    else:
+        L.append("  _Ödeme yok_")
+    L.append("")
 
-    lines.append("")
-    icon = "✅" if pnl >= 0 else "❌"
-    lines.append(f"*━━━ SONUÇ ━━━*")
-    lines.append(f"{icon} *KAR / ZARAR:* `{_fmt_try(pnl)}`")
-    return "\n".join(lines)
+    # ── Sonuç ──
+    icon = "🟢" if pnl >= 0 else "🔴"
+    L.append("🏛️ *SONUÇ*")
+    L.append(f"  {icon} *Toplam Kar / Zarar:*  `{_fmt_try(pnl)}`")
+
+    return "\n".join(L)
 
 
 @api_router.post("/reports/daily/send-telegram")
