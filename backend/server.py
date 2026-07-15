@@ -224,10 +224,12 @@ class SiteCredit(BaseModel):
     amount: float  # verilen kredi miktarı (TL)
     commission_pct: float  # yüzde (örn. 5.0 = %5)
     debt: float  # hesaplanmış borç = amount * commission_pct / 100
+    paid_amount: float = 0.0  # kümülatif ödenen miktar
+    payments: List[dict] = Field(default_factory=list)  # [{amount, date, paid_at, paid_by_email, note?}]
     note: Optional[str] = None
-    status: str = "unpaid"  # "unpaid" | "paid"
+    status: str = "unpaid"  # "unpaid" | "partial" | "paid"
     date: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
-    paid_at: Optional[str] = None
+    paid_at: Optional[str] = None  # borç tamamen ödendiği zaman
     paid_by_email: Optional[str] = None
     created_by_email: str
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -341,6 +343,12 @@ class SiteCreditInput(BaseModel):
     commission_pct: float
     note: Optional[str] = None
     date: Optional[str] = None
+
+
+class SiteCreditPaymentInput(BaseModel):
+    amount: float
+    date: Optional[str] = None
+    note: Optional[str] = None
 
 
 class DebtorInput(BaseModel):
@@ -526,7 +534,7 @@ async def list_site_credits(
     q: dict = {}
     if site_id:
         q["site_id"] = site_id
-    if status_filter in ("paid", "unpaid"):
+    if status_filter in ("paid", "unpaid", "partial"):
         q["status"] = status_filter
     docs = await db.site_credits.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     site_map = {s["id"]: s["name"] for s in await db.sites.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)}
@@ -537,7 +545,7 @@ async def list_site_credits(
 
 @api_router.post("/admin/site-credits")
 async def create_site_credit(inp: SiteCreditInput, user: dict = Depends(require_admin)):
-    site = await db.sites.find_one({"id": inp.site_id}, {"_id": 0, "id": 1, "name": 1})
+    site = await db.sites.find_one({"id": inp.site_id}, {"_id": 0})
     if not site:
         raise HTTPException(404, "Site bulunamadı")
     if inp.amount <= 0:
@@ -558,6 +566,8 @@ async def create_site_credit(inp: SiteCreditInput, user: dict = Depends(require_
     await log_audit(user, "site_credit.create", "site_credit", obj.id,
                     target_name=site["name"], site_id=inp.site_id,
                     details={"amount": inp.amount, "pct": inp.commission_pct, "debt": debt})
+    # Fire-and-forget Telegram notification
+    await _telegram_send_safe(site, _fmt_credit_created_message(site["name"], obj.model_dump()))
     return {**obj.model_dump(), "site_name": site["name"]}
 
 
@@ -588,8 +598,52 @@ async def update_site_credit(cid: str, inp: SiteCreditInput, user: dict = Depend
     return doc
 
 
+@api_router.post("/admin/site-credits/{cid}/payments")
+async def add_site_credit_payment(cid: str, inp: SiteCreditPaymentInput, user: dict = Depends(require_admin)):
+    """Register a payment against a credit. Supports partial payments; auto-updates status."""
+    existing = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Kredi kaydı bulunamadı")
+    if inp.amount <= 0:
+        raise HTTPException(400, "Ödeme tutarı 0'dan büyük olmalı")
+
+    debt = float(existing.get("debt", 0))
+    prev_paid = float(existing.get("paid_amount", 0))
+    new_paid = round(prev_paid + inp.amount, 2)
+    if new_paid > debt + 0.01:
+        raise HTTPException(400, f"Ödeme miktarı kalan borçtan fazla olamaz. Kalan borç: {round(debt - prev_paid, 2)} ₺")
+
+    payment = {
+        "amount": round(inp.amount, 2),
+        "date": inp.date or datetime.now(timezone.utc).date().isoformat(),
+        "paid_at": datetime.now(timezone.utc).isoformat(),
+        "paid_by_email": user["email"],
+        "note": inp.note or None,
+    }
+    new_status = "paid" if new_paid >= debt - 0.01 else "partial"
+    updates: dict = {
+        "paid_amount": new_paid,
+        "status": new_status,
+    }
+    if new_status == "paid":
+        updates["paid_at"] = payment["paid_at"]
+        updates["paid_by_email"] = user["email"]
+    await db.site_credits.update_one({"id": cid}, {"$set": updates, "$push": {"payments": payment}})
+    await log_audit(user, "site_credit.payment", "site_credit", cid,
+                    site_id=existing["site_id"],
+                    details={"amount": inp.amount, "date": payment["date"], "status": new_status, "paid_total": new_paid})
+
+    doc = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    site = await db.sites.find_one({"id": doc["site_id"]}, {"_id": 0})
+    doc["site_name"] = site.get("name") if site else "?"
+    # Fire-and-forget Telegram notification
+    await _telegram_send_safe(site, _fmt_credit_payment_message(doc["site_name"], doc, payment["amount"], payment["date"]))
+    return doc
+
+
 @api_router.patch("/admin/site-credits/{cid}/status")
 async def toggle_site_credit_status(cid: str, status: str = Query(...), user: dict = Depends(require_admin)):
+    """Manual status override (e.g. mark whole credit as unpaid to reset). For partial payments use POST /payments."""
     if status not in ("paid", "unpaid"):
         raise HTTPException(400, "status paid veya unpaid olmalı")
     existing = await db.site_credits.find_one({"id": cid}, {"_id": 0})
@@ -599,9 +653,12 @@ async def toggle_site_credit_status(cid: str, status: str = Query(...), user: di
     if status == "paid":
         updates["paid_at"] = datetime.now(timezone.utc).isoformat()
         updates["paid_by_email"] = user["email"]
+        updates["paid_amount"] = float(existing.get("debt", 0))
     else:
         updates["paid_at"] = None
         updates["paid_by_email"] = None
+        updates["paid_amount"] = 0.0
+        updates["payments"] = []
     await db.site_credits.update_one({"id": cid}, {"$set": updates})
     await log_audit(user, "site_credit.status", "site_credit", cid,
                     site_id=existing["site_id"], details={"status": status})
@@ -1261,14 +1318,19 @@ async def dashboard(
 
     # Site Credit debt aggregation (admin-managed credits given by Playspintech to this site)
     sc_docs = await db.site_credits.find({"site_id": target_site}, {"_id": 0}).sort("created_at", -1).to_list(500)
-    sc_unpaid = [c for c in sc_docs if c.get("status") == "unpaid"]
+    # normalize legacy records that may lack paid_amount / payments
+    for c in sc_docs:
+        c.setdefault("paid_amount", 0.0 if c.get("status") != "paid" else float(c.get("debt", 0)))
+        c.setdefault("payments", [])
+        c["remaining_debt"] = max(0.0, round(float(c.get("debt", 0)) - float(c.get("paid_amount", 0)), 2))
+    sc_open = [c for c in sc_docs if c.get("status") != "paid"]
     sc_paid = [c for c in sc_docs if c.get("status") == "paid"]
     site_credit_summary = {
-        "unpaid_debt": round(sum(c.get("debt", 0.0) for c in sc_unpaid), 2),
-        "unpaid_count": len(sc_unpaid),
+        "unpaid_debt": round(sum(c["remaining_debt"] for c in sc_open), 2),
+        "unpaid_count": len(sc_open),
         "paid_count": len(sc_paid),
         "total_count": len(sc_docs),
-        "recent": sc_docs[:5],  # last 5 for card display
+        "recent": sc_docs[:5],
     }
 
     return {
@@ -1654,6 +1716,56 @@ def _fmt_kasalar_message(site_name: str, balances: list) -> str:
     total_icon = "🟢" if total >= 0 else "🔴"
     L.append(f"{total_icon} *Toplam:*  `{_fmt_try(total)}`")
     return "\n".join(L)
+
+
+async def _telegram_send_safe(site: dict, text: str) -> None:
+    """Fire-and-forget Telegram send. Silently returns on missing config or error."""
+    token = (site or {}).get("telegram_bot_token")
+    chat_id = (site or {}).get("telegram_chat_id")
+    if not token or not chat_id:
+        return
+    import httpx
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(url, json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            })
+    except Exception as e:
+        logging.warning(f"Telegram send failed for site {site.get('id')}: {e}")
+
+
+def _fmt_credit_created_message(site_name: str, credit: dict) -> str:
+    L = [f"💳 *{site_name}* — Yeni Kredi Tanımlandı", ""]
+    L.append(f"📅 Tarih: `{credit.get('date')}`")
+    L.append(f"💰 Kredi Miktarı: `{_fmt_try(credit.get('amount', 0))}`")
+    L.append(f"📊 Yüzde: `%{credit.get('commission_pct', 0)}`")
+    L.append(f"🧾 Oluşan Borç: `{_fmt_try(credit.get('debt', 0))}`")
+    if credit.get("note"):
+        L.append(f"📝 Not: _{credit['note']}_")
+    return "\n".join(L)
+
+
+def _fmt_credit_payment_message(site_name: str, credit: dict, payment_amount: float, payment_date: str) -> str:
+    debt = float(credit.get("debt", 0))
+    paid = float(credit.get("paid_amount", 0))
+    remaining = max(0.0, round(debt - paid, 2))
+    L = [f"✅ *{site_name}* — Kredi Ödemesi Alındı", ""]
+    L.append(f"📅 Ödeme Tarihi: `{payment_date}`")
+    L.append(f"💵 Ödenen Tutar: `{_fmt_try(payment_amount)}`")
+    L.append(f"🧾 Toplam Borç: `{_fmt_try(debt)}`")
+    L.append(f"📥 Toplam Ödenmiş: `{_fmt_try(paid)}`")
+    if remaining <= 0:
+        L.append(f"🟢 *Kalan Borç:* `{_fmt_try(0)}` — Kredi tamamen ödendi ✔")
+    else:
+        L.append(f"🔴 *Kalan Borç:* `{_fmt_try(remaining)}`")
+    return "\n".join(L)
+
+
+
 
 
 @api_router.post("/reports/daily/send-telegram")

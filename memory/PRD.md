@@ -48,6 +48,7 @@ Turkish iGaming operator finance dashboard. Playspintech = provider (parent bran
 - **i18n TR/EN language toggle** (i18n context + shared Layout & Login translated; toggle in topbar & login page top-right; localStorage-persisted `pst_lang`; default TR)
 - **Telegram preview modals** for daily report and Kasalar (`TelegramPreviewDialog` component + `/api/reports/daily/telegram-preview` & `/api/kasalar/telegram-preview` endpoints); simplified Kasalar Telegram format (one line per kasa + total); Kasalar page "Kasaları Gönder" button
 - **Admin Site Credits** (`/admin/krediler`): new `SiteCredit` model + `site_credits` collection; admin-only CRUD endpoints (create/update/toggle-status/delete); Dashboard exposes `site_credit` summary with unpaid_debt banner + last 3 records
+- **Site Credit partial payments + Telegram alerts**: `paid_amount` + `payments[]` fields; new `POST /api/admin/site-credits/{id}/payments` endpoint (partial, overpay-guarded, auto-status paid/partial); Telegram notification to the site's group on credit-create and each payment; "Kredi Ödendi" opens a modal asking amount + date; UI shows Ödenmiş / Kalan columns and Kısmi status badge
 
 ## Backlog (P1/P2)
 - P1: Password change / forgot password flow

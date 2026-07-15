@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { HandCoins, Plus, Trash2, Check, RotateCcw, Loader2, Percent, Landmark } from "lucide-react";
+import { HandCoins, Plus, Trash2, Check, RotateCcw, Loader2, Percent, Landmark, Send } from "lucide-react";
 
 export default function AdminCredits() {
   const [sites, setSites] = useState([]);
@@ -18,6 +18,11 @@ export default function AdminCredits() {
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ site_id: "", amount: "", commission_pct: "", note: "" });
   const [saving, setSaving] = useState(false);
+  // Payment modal state
+  const [payOpen, setPayOpen] = useState(false);
+  const [payTarget, setPayTarget] = useState(null); // credit row
+  const [payForm, setPayForm] = useState({ amount: "", date: "", note: "" });
+  const [paying, setPaying] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -77,13 +82,46 @@ export default function AdminCredits() {
   };
 
   const toggleStatus = async (row) => {
-    const next = row.status === "paid" ? "unpaid" : "paid";
+    // Reset a paid credit back to unpaid (clears all payments)
+    if (row.status !== "paid") return;
+    if (!confirm(`${row.site_name} — bu ödendi kaydını geri alıp ödemeleri sıfırlansın mı?`)) return;
     try {
-      await api.patch(`/admin/site-credits/${row.id}/status`, null, { params: { status: next } });
-      toast.success(next === "paid" ? "Ödendi olarak işaretlendi" : "Ödenmedi olarak işaretlendi");
+      await api.patch(`/admin/site-credits/${row.id}/status`, null, { params: { status: "unpaid" } });
+      toast.success("Kayıt sıfırlandı (ödemeler silindi)");
       await load();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Güncellenemedi");
+    }
+  };
+
+  const openPay = (row) => {
+    const remaining = Math.max(0, (row.debt || 0) - (row.paid_amount || 0));
+    setPayTarget(row);
+    setPayForm({ amount: remaining.toString(), date: new Date().toISOString().slice(0, 10), note: "" });
+    setPayOpen(true);
+  };
+
+  const submitPayment = async () => {
+    if (!payTarget) return;
+    const amount = parseFloat(payForm.amount);
+    if (isNaN(amount) || amount <= 0) return toast.error("Geçerli bir ödeme tutarı girin");
+    const remaining = (payTarget.debt || 0) - (payTarget.paid_amount || 0);
+    if (amount > remaining + 0.01) return toast.error(`Kalan borç ${fmtTRY(remaining)} — daha fazlası ödenemez`);
+    setPaying(true);
+    try {
+      await api.post(`/admin/site-credits/${payTarget.id}/payments`, {
+        amount,
+        date: payForm.date || null,
+        note: payForm.note || null,
+      });
+      toast.success("Ödeme kaydedildi ve Telegram'a bildirildi");
+      setPayOpen(false);
+      setPayTarget(null);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Ödeme kaydedilemedi");
+    } finally {
+      setPaying(false);
     }
   };
 
@@ -101,9 +139,11 @@ export default function AdminCredits() {
   const totals = useMemo(() => {
     let unpaid = 0, paid = 0, totalAmount = 0, totalDebt = 0;
     rows.forEach(r => {
+      const remaining = Math.max(0, (r.debt || 0) - (r.paid_amount || 0));
       totalAmount += r.amount;
       totalDebt += r.debt;
-      if (r.status === "paid") paid += r.debt; else unpaid += r.debt;
+      paid += r.paid_amount || 0;
+      if (r.status !== "paid") unpaid += remaining;
     });
     return { unpaid, paid, totalAmount, totalDebt };
   }, [rows]);
@@ -137,6 +177,7 @@ export default function AdminCredits() {
             <SelectContent>
               <SelectItem value="all">Tüm durumlar</SelectItem>
               <SelectItem value="unpaid">Ödenmedi</SelectItem>
+              <SelectItem value="partial">Kısmi</SelectItem>
               <SelectItem value="paid">Ödendi</SelectItem>
             </SelectContent>
           </Select>
@@ -156,6 +197,7 @@ export default function AdminCredits() {
               <TableHead className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground text-right">Kredi Miktarı</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground text-right">%</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground text-right">Borç</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground text-right">Ödenmiş / Kalan</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Durum</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Not</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground text-right">Aksiyon</TableHead>
@@ -163,22 +205,35 @@ export default function AdminCredits() {
           </TableHeader>
           <TableBody>
             {loading && (
-              <TableRow className="border-border"><TableCell colSpan={8} className="text-center text-xs text-muted-foreground py-6">Yükleniyor...</TableCell></TableRow>
+              <TableRow className="border-border"><TableCell colSpan={9} className="text-center text-xs text-muted-foreground py-6">Yükleniyor...</TableCell></TableRow>
             )}
             {!loading && rows.length === 0 && (
-              <TableRow className="border-border"><TableCell colSpan={8} className="text-center text-xs text-muted-foreground py-8">Kayıt yok</TableCell></TableRow>
+              <TableRow className="border-border"><TableCell colSpan={9} className="text-center text-xs text-muted-foreground py-8">Kayıt yok</TableCell></TableRow>
             )}
-            {!loading && rows.map(r => (
+            {!loading && rows.map(r => {
+              const paidAmt = r.paid_amount || 0;
+              const remaining = Math.max(0, (r.debt || 0) - paidAmt);
+              const isPaid = r.status === "paid";
+              const isPartial = r.status === "partial" || (paidAmt > 0 && !isPaid);
+              return (
               <TableRow key={r.id} className="border-border" data-testid={`ac-row-${r.id}`}>
                 <TableCell className="font-data text-xs text-foreground">{r.date}</TableCell>
                 <TableCell className="text-sm text-foreground">{r.site_name}</TableCell>
                 <TableCell className="text-right font-data text-sm text-foreground">{fmtTRY(r.amount)}</TableCell>
                 <TableCell className="text-right font-data text-xs text-muted-foreground">%{r.commission_pct}</TableCell>
-                <TableCell className={`text-right font-data text-sm font-medium ${r.status === "paid" ? "text-muted-foreground line-through" : "text-[hsl(45_100%_55%)]"}`}>{fmtTRY(r.debt)}</TableCell>
+                <TableCell className="text-right font-data text-sm text-foreground">{fmtTRY(r.debt)}</TableCell>
+                <TableCell className="text-right font-data text-xs">
+                  <div className="text-[hsl(144_100%_55%)]">{fmtTRY(paidAmt)}</div>
+                  <div className={isPaid ? "text-muted-foreground" : "text-[hsl(45_100%_55%)] font-medium"}>{fmtTRY(remaining)}</div>
+                </TableCell>
                 <TableCell>
-                  {r.status === "paid" ? (
+                  {isPaid ? (
                     <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.2em] px-2 py-1 rounded-sm border border-[hsl(144_100%_45%)] text-[hsl(144_100%_55%)]" data-testid={`ac-status-${r.id}`}>
                       <Check className="w-3 h-3" /> Ödendi
+                    </span>
+                  ) : isPartial ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.2em] px-2 py-1 rounded-sm border border-[hsl(200_100%_55%)] text-[hsl(200_100%_65%)]" data-testid={`ac-status-${r.id}`}>
+                      Kısmi
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.2em] px-2 py-1 rounded-sm border border-[hsl(45_100%_55%)] text-[hsl(45_100%_55%)]" data-testid={`ac-status-${r.id}`}>
@@ -189,16 +244,24 @@ export default function AdminCredits() {
                 <TableCell className="text-xs text-muted-foreground max-w-[240px] truncate">{r.note || "—"}</TableCell>
                 <TableCell className="text-right">
                   <div className="inline-flex items-center gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => toggleStatus(r)} className="h-7 px-2 rounded-sm text-xs" data-testid={`ac-toggle-${r.id}`} title={r.status === "paid" ? "Ödenmedi yap" : "Ödendi yap"}>
-                      {r.status === "paid" ? <RotateCcw className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
-                    </Button>
+                    {!isPaid && (
+                      <Button size="sm" onClick={() => openPay(r)} className="h-7 px-2.5 rounded-sm text-xs bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 active:scale-95" data-testid={`ac-pay-${r.id}`}>
+                        <Check className="w-3.5 h-3.5" /> Kredi Ödendi
+                      </Button>
+                    )}
+                    {isPaid && (
+                      <Button size="sm" variant="ghost" onClick={() => toggleStatus(r)} className="h-7 px-2 rounded-sm text-xs" data-testid={`ac-reset-${r.id}`} title="Ödemeleri sıfırla">
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
                     <Button size="sm" variant="ghost" onClick={() => remove(r)} className="h-7 px-2 rounded-sm text-xs text-[hsl(345_100%_65%)] hover:text-[hsl(345_100%_75%)]" data-testid={`ac-delete-${r.id}`}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
                   </div>
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
       </div>
@@ -243,6 +306,60 @@ export default function AdminCredits() {
             <Button onClick={create} disabled={saving} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95" data-testid="ac-form-save">
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
               Ekle
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Payment dialog */}
+      <Dialog open={payOpen} onOpenChange={(v) => { setPayOpen(v); if (!v) setPayTarget(null); }}>
+        <DialogContent className="bg-card border-border rounded-sm max-w-md" data-testid="ac-pay-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display text-foreground flex items-center gap-2">
+              <Check className="w-4 h-4 text-primary" /> Kredi Ödemesi Kaydet
+            </DialogTitle>
+          </DialogHeader>
+          {payTarget && (
+            <div className="space-y-3">
+              <div className="border border-border rounded-sm bg-background p-3 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Site</span>
+                  <span className="text-foreground">{payTarget.site_name}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Toplam Borç</span>
+                  <span className="font-data text-foreground">{fmtTRY(payTarget.debt)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Şu ana kadar ödenmiş</span>
+                  <span className="font-data text-[hsl(144_100%_55%)]">{fmtTRY(payTarget.paid_amount || 0)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-border">
+                  <span className="text-muted-foreground uppercase tracking-[0.2em] text-[10px]">Kalan Borç</span>
+                  <span className="font-data text-[hsl(45_100%_55%)] text-base font-medium" data-testid="ac-pay-remaining">{fmtTRY(Math.max(0, (payTarget.debt || 0) - (payTarget.paid_amount || 0)))}</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Ödenen Tutar (₺)">
+                  <Input type="number" step="0.01" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ac-pay-amount" autoFocus />
+                </Field>
+                <Field label="Ödeme Tarihi">
+                  <Input type="date" value={payForm.date} onChange={(e) => setPayForm({ ...payForm, date: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm font-data" data-testid="ac-pay-date" />
+                </Field>
+              </div>
+              <Field label="Not (opsiyonel)">
+                <Input value={payForm.note} onChange={(e) => setPayForm({ ...payForm, note: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ac-pay-note" />
+              </Field>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-1.5">
+                <Send className="w-3 h-3" /> Ödeme sonrası siteye Telegram bildirimi gönderilecek
+              </div>
+            </div>
+          )}
+          <DialogFooter className="flex flex-row justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setPayOpen(false)} disabled={paying} className="rounded-sm border border-border h-9" data-testid="ac-pay-cancel">İptal</Button>
+            <Button onClick={submitPayment} disabled={paying} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95" data-testid="ac-pay-save">
+              {paying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              Ödemeyi Kaydet
             </Button>
           </DialogFooter>
         </DialogContent>
