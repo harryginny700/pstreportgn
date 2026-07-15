@@ -103,21 +103,21 @@ export default function Dashboard() {
   return (
     <div className="space-y-8" data-testid="dashboard-page">
       {/* Filter */}
-      <div className="flex items-end justify-between flex-wrap gap-4">
+      <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-1">Dönem</div>
           <div className="font-data text-xs text-neutral-400">
             {dateFrom} → {dateTo}
           </div>
         </div>
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 flex-wrap">
           <div>
             <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Başlangıç</label>
             <Input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="w-40 bg-transparent border-border rounded-sm font-data text-xs"
+              className="w-36 sm:w-40 bg-transparent border-border rounded-sm font-data text-xs"
               data-testid="dashboard-date-from"
             />
           </div>
@@ -127,7 +127,7 @@ export default function Dashboard() {
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="w-40 bg-transparent border-border rounded-sm font-data text-xs"
+              className="w-36 sm:w-40 bg-transparent border-border rounded-sm font-data text-xs"
               data-testid="dashboard-date-to"
             />
           </div>

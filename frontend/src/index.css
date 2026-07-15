@@ -144,6 +144,37 @@
 /* Backdrop blur topbar readability in light */
 :root:not(.dark) .backdrop-blur-xl { backdrop-filter: none; }
 
+/* ============================================
+   MOBILE OPTIMIZATIONS
+   ============================================ */
+/* Make all data tables horizontally scrollable on mobile */
+@media (max-width: 767px) {
+    .rounded-sm > table,
+    .overflow-hidden > table,
+    div:has(> table) > table {
+        min-width: 100%;
+    }
+    /* Force any div directly wrapping a table to allow horizontal scroll */
+    div.overflow-hidden:has(> table) {
+        overflow-x: auto !important;
+    }
+    /* Reduce padding on tables in mobile */
+    table th,
+    table td {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+        white-space: nowrap;
+    }
+    /* Chart containers need explicit height on mobile */
+    .recharts-responsive-container {
+        min-height: 220px;
+    }
+    /* Larger tap targets */
+    button[data-testid], a[data-testid] {
+        min-height: 36px;
+    }
+}
+
 /* Selection */
 ::selection {
     background: hsl(var(--primary) / 0.3);

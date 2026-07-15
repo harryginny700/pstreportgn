@@ -182,7 +182,7 @@ function DailyReportGrid({ data }) {
   return (
     <div className="grid grid-cols-12 gap-4" data-testid="daily-grid">
       {/* ============ LEFT: Payment methods table ============ */}
-      <div className="col-span-12 xl:col-span-7 border border-border rounded-sm bg-card overflow-hidden" data-testid="daily-pm-table">
+      <div className="col-span-12 lg:col-span-7 border border-border rounded-sm bg-card overflow-x-auto" data-testid="daily-pm-table">
         <div className="px-5 py-3 border-b border-border flex items-center justify-between">
           <div>
             <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Ödeme Yöntemleri</div>
@@ -229,7 +229,7 @@ function DailyReportGrid({ data }) {
       </div>
 
       {/* ============ RIGHT: Stat blocks ============ */}
-      <div className="col-span-12 xl:col-span-5 space-y-3">
+      <div className="col-span-12 lg:col-span-5 space-y-3">
         {/* Members block (Site üyeleri) */}
         <StatBlock accent="primary" testId="stats-members" icon={Users} title="Site Üyeleri">
           <StatRow icon={TrendingUp} label="Site Üyeleri Yatırım" value={totalDeposit} tone="green" />

@@ -78,9 +78,9 @@ export default function Credits() {
       </div>
 
       {/* Add form */}
-      <div className="border border-border rounded-sm bg-card p-5">
-        <h3 className="font-display text-lg text-white mb-4">Kredi Hareketi Ekle</h3>
-        <div className="grid grid-cols-2 md:grid-cols-7 gap-3 items-end">
+      <div className="border border-border rounded-sm bg-card p-4 md:p-5">
+        <h3 className="font-display text-lg text-foreground mb-4">Kredi Hareketi Ekle</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 items-end">
           <div>
             <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Tarih</label>
             <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="bg-transparent border-border rounded-sm font-data h-9" data-testid="credit-date" />
