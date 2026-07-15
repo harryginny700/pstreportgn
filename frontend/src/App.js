@@ -2,6 +2,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { ThemeProvider, useTheme } from "@/lib/theme";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -54,25 +55,35 @@ function AppRoutes() {
 
 function App() {
   return (
-    <div className="dark min-h-screen bg-background text-foreground">
-      <BrowserRouter>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
-      </BrowserRouter>
-      <Toaster
-        theme="dark"
-        position="bottom-right"
-        toastOptions={{
-          style: {
-            background: "hsl(0 0% 6%)",
-            border: "1px solid hsl(0 0% 15%)",
-            color: "white",
-            fontFamily: "Manrope, sans-serif",
-          },
-        }}
-      />
-    </div>
+    <ThemeProvider>
+      <div className="min-h-screen bg-background text-foreground">
+        <BrowserRouter>
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
+        </BrowserRouter>
+        <ThemedToaster />
+      </div>
+    </ThemeProvider>
+  );
+}
+
+function ThemedToaster() {
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
+  return (
+    <Toaster
+      theme={isDark ? "dark" : "light"}
+      position="bottom-right"
+      toastOptions={{
+        style: {
+          background: isDark ? "hsl(0 0% 6%)" : "hsl(0 0% 100%)",
+          border: isDark ? "1px solid hsl(0 0% 15%)" : "1px solid hsl(0 0% 88%)",
+          color: isDark ? "white" : "hsl(0 0% 10%)",
+          fontFamily: "Manrope, sans-serif",
+        },
+      }}
+    />
   );
 }
 

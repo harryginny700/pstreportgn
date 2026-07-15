@@ -15,8 +15,11 @@ import {
   Globe,
   ArrowLeft,
   User,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -39,6 +42,7 @@ export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, site, logout, isAdmin, adminSiteId, setAdminSiteId } = useAuth();
+  const { theme, toggle: toggleTheme } = useTheme();
   const [sites, setSites] = useState([]);
 
   useEffect(() => {
@@ -172,9 +176,19 @@ export default function Layout() {
               </span>
               <h1 className="font-display text-lg font-medium text-white" data-testid="page-title">{currentLabel}</h1>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-[hsl(144_100%_50%)]" />
-              <span className="text-[11px] uppercase tracking-[0.2em] text-neutral-400 font-data">Bağlı</span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleTheme}
+                aria-label="Tema değiştir"
+                data-testid="theme-toggle"
+                className="w-8 h-8 rounded-sm border border-border hover:bg-secondary flex items-center justify-center transition-colors active:scale-95"
+              >
+                {theme === "dark" ? <Sun className="w-3.5 h-3.5 text-primary" /> : <Moon className="w-3.5 h-3.5 text-primary" />}
+              </button>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-[hsl(144_100%_50%)]" />
+                <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground font-data">Bağlı</span>
+              </div>
             </div>
           </div>
         </header>
