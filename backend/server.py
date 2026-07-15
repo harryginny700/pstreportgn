@@ -1248,9 +1248,9 @@ async def export_monthly_report(
 
 async def _seed_default_site_data(site_id: str):
     kasalar = [
-        ("MAKSİ KASA", 1), ("PLUS KASA", 2), ("FTN KASA", 3),
-        ("TONY KASA", 4), ("TS KASA", 5), ("KARTAL KASA", 6),
-        ("ALEX KASA", 7), ("KORAY KASA", 8),
+        ("BP KASA", 1),
+        ("MULTİPAY KASA", 2),
+        ("PAYLUX KASA", 3),
     ]
     kasa_ids = {}
     for name, order in kasalar:
@@ -1259,17 +1259,19 @@ async def _seed_default_site_data(site_id: str):
         kasa_ids[name] = obj.id
 
     methods = [
-        ("MAKSİ PAYFİX", "MAKSİ KASA", 8, 1),
-        ("MAKSİ PAPARA", "MAKSİ KASA", 8, 0),
-        ("MAKSİ HAVALE", "MAKSİ KASA", 9, 1),
-        ("MAKSİ KRİPTO", "MAKSİ KASA", 2, 3),
-        ("MAKSİ PEP", "MAKSİ KASA", 7, 0),
-        ("MAKSİ PAYBOL&POPYPARA", "MAKSİ KASA", 6, 0),
-        ("MAKSİ OZANPAY", "MAKSİ KASA", 6, 1),
-        ("MAKSİ KREDİ KARTI", "MAKSİ KASA", 10, 0),
-        ("PLUS HAVALE", "PLUS KASA", 9, 0),
-        ("PLUS PAPARA", "PLUS KASA", 8, 0),
-        ("FTN", "FTN KASA", 0, 0),
+        # (name, kasa, deposit_pct, withdrawal_pct)
+        ("BP HAVALE",         "BP KASA",       7,    0),
+        ("MULTİPAY BANKPAY",  "MULTİPAY KASA", 5,    0.5),
+        ("MULTİPAY BANKİN",   "BP KASA",       5,    0.5),
+        ("MULTİPAY PAPARA",   "BP KASA",       6.5,  1),
+        ("PAYLUX HAVALE",     "BP KASA",       3.5,  3),
+        ("PAYLUX KRİPTO",     "BP KASA",       2.5,  0.5),
+        ("JET HAVALE",        "BP KASA",       5,    0),
+        ("JET KRİPTO",        "BP KASA",       2,    2),
+        ("JET QR",            "BP KASA",       7,    1),
+        ("JET KREDİ KARTI",   "MULTİPAY KASA", 12,   0),
+        ("NEO HAVALE",        "MULTİPAY KASA", 6,    1),
+        ("NEO KRİPTO",        "PAYLUX KASA",   2,    2),
     ]
     for i, (name, kasa, dep, wd) in enumerate(methods):
         obj = PaymentMethod(site_id=site_id, name=name,
