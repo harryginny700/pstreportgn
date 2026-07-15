@@ -25,7 +25,7 @@ export default function AdminHome() {
   const [siteForm, setSiteForm] = useState({ name: "", slug: "" });
   const [siteDialog, setSiteDialog] = useState(false);
 
-  const [userForm, setUserForm] = useState({ email: "", password: "", name: "", site_id: "", site_role: "operator" });
+  const [userForm, setUserForm] = useState({ user_type: "site", email: "", password: "", name: "", site_id: "", site_role: "operator" });
   const [userDialog, setUserDialog] = useState(false);
 
   const loadSites = async () => {
@@ -87,17 +87,23 @@ export default function AdminHome() {
 
   const submitUser = async () => {
     if (!userForm.email || !userForm.password) return toast.error("E-posta ve şifre gerekli");
-    if (!userForm.site_id) return toast.error("Site seçin");
+    const isAdminUser = userForm.user_type === "admin";
+    if (!isAdminUser && !userForm.site_id) return toast.error("Site seçin");
     try {
-      await api.post("/admin/users", {
+      const payload = {
         email: userForm.email.trim(),
         password: userForm.password,
         name: userForm.name.trim() || null,
-        site_id: userForm.site_id,
-        site_role: userForm.site_role,
-      });
-      toast.success("Kullanıcı oluşturuldu");
-      setUserForm({ email: "", password: "", name: "", site_id: "", site_role: "operator" });
+      };
+      if (isAdminUser) {
+        payload.platform_role = "admin";
+      } else {
+        payload.site_id = userForm.site_id;
+        payload.site_role = userForm.site_role;
+      }
+      await api.post("/admin/users", payload);
+      toast.success(isAdminUser ? "Admin kullanıcı oluşturuldu" : "Site kullanıcısı oluşturuldu");
+      setUserForm({ user_type: "site", email: "", password: "", name: "", site_id: "", site_role: "operator" });
       setUserDialog(false);
       loadUsers();
       loadSites();
@@ -304,17 +310,34 @@ export default function AdminHome() {
                 </Button>
               </DialogTrigger>
               <DialogContent className="bg-card border-border rounded-sm">
-                <DialogHeader><DialogTitle className="font-display text-white">Yeni Site Kullanıcısı</DialogTitle></DialogHeader>
+                <DialogHeader><DialogTitle className="font-display text-white">Yeni Kullanıcı</DialogTitle></DialogHeader>
                 <div className="space-y-4 py-2">
                   <div>
-                    <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Site</label>
-                    <Select value={userForm.site_id} onValueChange={(v) => setUserForm({ ...userForm, site_id: v })}>
-                      <SelectTrigger className="bg-transparent border-border rounded-sm h-10" data-testid="user-site-select"><SelectValue placeholder="Site seçin" /></SelectTrigger>
+                    <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Kullanıcı Tipi</label>
+                    <Select value={userForm.user_type} onValueChange={(v) => setUserForm({ ...userForm, user_type: v })}>
+                      <SelectTrigger className="bg-transparent border-border rounded-sm h-10" data-testid="user-type-select"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {sites.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                        <SelectItem value="site">Site Kullanıcısı</SelectItem>
+                        <SelectItem value="admin">Playspintech Admin</SelectItem>
                       </SelectContent>
                     </Select>
+                    {userForm.user_type === "admin" && (
+                      <div className="text-[10px] text-[hsl(45_100%_55%)] mt-1.5 font-data uppercase tracking-[0.2em]">
+                        ⚠ Admin: tüm siteleri yönetir, kullanıcı ve kredi oluşturabilir.
+                      </div>
+                    )}
                   </div>
+                  {userForm.user_type === "site" && (
+                    <div>
+                      <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Site</label>
+                      <Select value={userForm.site_id} onValueChange={(v) => setUserForm({ ...userForm, site_id: v })}>
+                        <SelectTrigger className="bg-transparent border-border rounded-sm h-10" data-testid="user-site-select"><SelectValue placeholder="Site seçin" /></SelectTrigger>
+                        <SelectContent>
+                          {sites.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">E-posta</label>
                     <Input type="email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} className="bg-transparent border-border rounded-sm h-10" data-testid="user-email-input" />
@@ -326,18 +349,22 @@ export default function AdminHome() {
                   <div>
                     <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Şifre</label>
                     <Input type="text" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} className="bg-transparent border-border rounded-sm h-10 font-data" data-testid="user-password-input" />
-                    <div className="text-[10px] text-neutral-500 mt-1 font-data">Site kullanıcısına iletiniz</div>
+                    <div className="text-[10px] text-neutral-500 mt-1 font-data">
+                      {userForm.user_type === "admin" ? "Admin'e güvenli bir kanalla iletiniz" : "Site kullanıcısına iletiniz"}
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Rol</label>
-                    <Select value={userForm.site_role} onValueChange={(v) => setUserForm({ ...userForm, site_role: v })}>
-                      <SelectTrigger className="bg-transparent border-border rounded-sm h-10" data-testid="user-role-select"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="owner">Site Sahibi (Owner)</SelectItem>
-                        <SelectItem value="operator">Operatör</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {userForm.user_type === "site" && (
+                    <div>
+                      <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Rol</label>
+                      <Select value={userForm.site_role} onValueChange={(v) => setUserForm({ ...userForm, site_role: v })}>
+                        <SelectTrigger className="bg-transparent border-border rounded-sm h-10" data-testid="user-role-select"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="owner">Site Sahibi (Owner)</SelectItem>
+                          <SelectItem value="operator">Operatör</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
                 <DialogFooter>
                   <Button onClick={submitUser} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95" data-testid="user-create-submit">Oluştur</Button>
