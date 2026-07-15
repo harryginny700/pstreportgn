@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
+import { useI18n } from "@/lib/i18n";
 import { api } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const { user, site, logout, isAdmin, adminSiteId, setAdminSiteId } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
+  const { lang, toggle: toggleLang } = useI18n();
   const [sites, setSites] = useState([]);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -228,6 +230,15 @@ export default function Layout() {
               </div>
             </div>
             <div className="flex items-center gap-2 md:gap-3 shrink-0">
+              <button
+                onClick={toggleLang}
+                aria-label="Dil değiştir"
+                data-testid="lang-toggle"
+                title={lang === "tr" ? "Switch to English" : "Türkçe'ye geç"}
+                className="h-8 px-2.5 rounded-sm border border-border hover:bg-secondary flex items-center justify-center transition-colors active:scale-95 font-data text-[11px] uppercase tracking-[0.15em] text-foreground"
+              >
+                {lang === "tr" ? "TR" : "EN"}
+              </button>
               <button
                 onClick={toggleTheme}
                 aria-label="Tema değiştir"
