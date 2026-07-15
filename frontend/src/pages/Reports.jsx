@@ -234,56 +234,9 @@ function DailyReportGrid({ data }) {
   const profitLoss = s.profit_loss;
 
   return (
-    <div className="grid grid-cols-12 gap-4" data-testid="daily-grid">
-      {/* ============ LEFT: Payment methods table ============ */}
-      <div className="col-span-12 lg:col-span-7 border border-border rounded-sm bg-card overflow-x-auto" data-testid="daily-pm-table">
-        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Ödeme Yöntemleri</div>
-            <h3 className="font-display text-lg text-white mt-0.5">Günlük Nakit Giriş</h3>
-          </div>
-          <div className="text-[10px] uppercase tracking-[0.25em] text-neutral-500 font-data">{rows.length} yöntem</div>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow className="border-border hover:bg-transparent bg-secondary/40">
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold">Yöntem</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold text-right">Yatırım</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold text-right">Çekim</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold text-right">Komisyon</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold text-right">Kalan Tutar</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.length === 0 && (
-              <TableRow className="border-border"><TableCell colSpan={5} className="text-center text-xs text-neutral-500 font-data py-8">Bu tarihte veri yok</TableCell></TableRow>
-            )}
-            {rows.map((r) => {
-              const isEmpty = r.deposit === 0 && r.withdrawal === 0;
-              return (
-                <TableRow key={r.payment_method_id} className={`border-border ${isEmpty ? "opacity-40" : ""} hover:bg-white/[0.02]`} data-testid={`daily-pm-row-${r.name}`}>
-                  <TableCell className="font-medium text-white text-sm">{r.name}</TableCell>
-                  <TableCell className="text-right font-data text-sm text-[hsl(144_100%_55%)]">{r.deposit > 0 ? fmtTRY(r.deposit) : "—"}</TableCell>
-                  <TableCell className="text-right font-data text-sm text-[hsl(345_100%_65%)]">{r.withdrawal > 0 ? fmtTRY(r.withdrawal) : "—"}</TableCell>
-                  <TableCell className="text-right font-data text-sm text-[hsl(53_98%_60%)]">{r.commission > 0 ? fmtTRY(r.commission) : "—"}</TableCell>
-                  <TableCell className={`text-right font-data text-sm ${r.net >= 0 ? "text-white" : "text-[hsl(345_100%_65%)]"}`}>{fmtTRY(r.net)}</TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-        {/* Total row */}
-        <div className="grid grid-cols-5 border-t-2 border-primary bg-primary/[0.06]">
-          <div className="p-3 font-display text-sm text-primary uppercase tracking-widest">Nakit Giriş Toplamı</div>
-          <div className="p-3 text-right font-data text-sm text-[hsl(144_100%_55%)] font-semibold" data-testid="daily-total-deposit">{fmtTRY(totalDeposit)}</div>
-          <div className="p-3 text-right font-data text-sm text-[hsl(345_100%_65%)] font-semibold" data-testid="daily-total-withdrawal">{fmtTRY(totalWithdrawal)}</div>
-          <div className="p-3 text-right font-data text-sm text-[hsl(53_98%_60%)] font-semibold" data-testid="daily-total-commission">{fmtTRY(totalCommission)}</div>
-          <div className={`p-3 text-right font-data text-sm font-semibold ${totalNet >= 0 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} data-testid="daily-total-net">{fmtTRY(totalNet)}</div>
-        </div>
-      </div>
-
-      {/* ============ RIGHT: Stat blocks ============ */}
-      <div className="col-span-12 lg:col-span-5 space-y-3">
+    <div className="flex flex-col gap-4" data-testid="daily-grid">
+      {/* ============ Stat blocks (TOP) ============ */}
+      <div className="space-y-3">
         {/* Members block (Site üyeleri) */}
         <StatBlock accent="primary" testId="stats-members" icon={Users} title="Site Üyeleri">
           <StatRow icon={TrendingUp} label="Site Üyeleri Yatırım" value={totalDeposit} tone="green" />
@@ -373,6 +326,53 @@ function DailyReportGrid({ data }) {
               {fmtTRY(profitLoss)}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ============ BOTTOM: Payment methods / Günlük Nakit Giriş table ============ */}
+      <div className="border border-border rounded-sm bg-card overflow-x-auto" data-testid="daily-pm-table">
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Ödeme Yöntemleri</div>
+            <h3 className="font-display text-lg text-white mt-0.5">Günlük Nakit Giriş</h3>
+          </div>
+          <div className="text-[10px] uppercase tracking-[0.25em] text-neutral-500 font-data">{rows.length} yöntem</div>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow className="border-border hover:bg-transparent bg-secondary/40">
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold">Yöntem</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold text-right">Yatırım</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold text-right">Çekim</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold text-right">Komisyon</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-semibold text-right">Kalan Tutar</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 && (
+              <TableRow className="border-border"><TableCell colSpan={5} className="text-center text-xs text-neutral-500 font-data py-8">Bu tarihte veri yok</TableCell></TableRow>
+            )}
+            {rows.map((r) => {
+              const isEmpty = r.deposit === 0 && r.withdrawal === 0;
+              return (
+                <TableRow key={r.payment_method_id} className={`border-border ${isEmpty ? "opacity-40" : ""} hover:bg-white/[0.02]`} data-testid={`daily-pm-row-${r.name}`}>
+                  <TableCell className="font-medium text-white text-sm">{r.name}</TableCell>
+                  <TableCell className="text-right font-data text-sm text-[hsl(144_100%_55%)]">{r.deposit > 0 ? fmtTRY(r.deposit) : "—"}</TableCell>
+                  <TableCell className="text-right font-data text-sm text-[hsl(345_100%_65%)]">{r.withdrawal > 0 ? fmtTRY(r.withdrawal) : "—"}</TableCell>
+                  <TableCell className="text-right font-data text-sm text-[hsl(53_98%_60%)]">{r.commission > 0 ? fmtTRY(r.commission) : "—"}</TableCell>
+                  <TableCell className={`text-right font-data text-sm ${r.net >= 0 ? "text-white" : "text-[hsl(345_100%_65%)]"}`}>{fmtTRY(r.net)}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+        {/* Total row */}
+        <div className="grid grid-cols-5 border-t-2 border-primary bg-primary/[0.06]">
+          <div className="p-3 font-display text-sm text-primary uppercase tracking-widest">Nakit Giriş Toplamı</div>
+          <div className="p-3 text-right font-data text-sm text-[hsl(144_100%_55%)] font-semibold" data-testid="daily-total-deposit">{fmtTRY(totalDeposit)}</div>
+          <div className="p-3 text-right font-data text-sm text-[hsl(345_100%_65%)] font-semibold" data-testid="daily-total-withdrawal">{fmtTRY(totalWithdrawal)}</div>
+          <div className="p-3 text-right font-data text-sm text-[hsl(53_98%_60%)] font-semibold" data-testid="daily-total-commission">{fmtTRY(totalCommission)}</div>
+          <div className={`p-3 text-right font-data text-sm font-semibold ${totalNet >= 0 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} data-testid="daily-total-net">{fmtTRY(totalNet)}</div>
         </div>
       </div>
     </div>
