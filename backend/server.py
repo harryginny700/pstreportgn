@@ -1473,6 +1473,36 @@ def _fmt_daily_message(site_name: str, date_str: str, data: dict) -> str:
     return "\n".join(L)
 
 
+def _fmt_kasalar_message(site_name: str, balances: list) -> str:
+    """Format current cash register (Kasalar) snapshot for Telegram, matching Kasalar page."""
+    L = []
+    L.append(f"🏦 *{site_name}* — Kasalar (Anlık Durum)")
+    L.append("")
+    if not balances:
+        L.append("_Kasa yok_")
+        return "\n".join(L)
+
+    total = 0.0
+    for b in balances:
+        initial = float(b.get("initial_balance") or 0)
+        current = float(b.get("balance") or 0)
+        delta = current - initial
+        delta_prefix = "+" if delta >= 0 else ""
+        status = "🟢" if current >= 0 else "🔴"
+        name = (b.get("name") or "?").replace("*", "").replace("_", "").replace("`", "")
+        L.append(f"{status} *{name}*")
+        L.append(f"  🔸 Açılış:  `{_fmt_try(initial)}`")
+        L.append(f"  🔹 Net Değişim:  `{delta_prefix}{_fmt_try(delta)}`")
+        L.append(f"  💵 Anlık Bakiye:  `{_fmt_try(current)}`")
+        L.append("")
+        total += current
+
+    total_icon = "🟢" if total >= 0 else "🔴"
+    L.append("━━━━━━━━━━━━━━━━━━━")
+    L.append(f"{total_icon} *Toplam Kasa Bakiyesi:*  `{_fmt_try(total)}`")
+    return "\n".join(L)
+
+
 @api_router.post("/reports/daily/send-telegram")
 async def send_daily_telegram(date_str: str = Query(..., alias="date"),
                               user: dict = Depends(get_current_user)):
@@ -1490,28 +1520,33 @@ async def send_daily_telegram(date_str: str = Query(..., alias="date"),
     data = await report_daily(date_str, None, user)
     msg = _fmt_daily_message(site["name"], date_str, data)
 
-    # Send via Telegram HTTP API
+    # Compute current Kasalar balances (matches Kasalar page) for the follow-up message
+    balances = await compute_balances_for_site(user["site_id"])
+    kasa_msg = _fmt_kasalar_message(site["name"], balances)
+
+    # Send via Telegram HTTP API (two sequential messages: daily report, then kasalar snapshot)
     import httpx
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(url, json={
-                "chat_id": chat_id,
-                "text": msg,
-                "parse_mode": "Markdown",
-                "disable_web_page_preview": True,
-            })
-        if resp.status_code != 200:
-            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"text": resp.text}
-            desc = body.get("description", "Telegram API hatası")
-            raise HTTPException(502, f"Telegram: {desc}")
+            for m in (msg, kasa_msg):
+                resp = await client.post(url, json={
+                    "chat_id": chat_id,
+                    "text": m,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                })
+                if resp.status_code != 200:
+                    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"text": resp.text}
+                    desc = body.get("description", "Telegram API hatası")
+                    raise HTTPException(502, f"Telegram: {desc}")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(502, f"Telegram bağlantı hatası: {e}")
 
     await log_audit(user, "telegram.send_daily", "site", user["site_id"],
-                    site_id=user["site_id"], details={"date": date_str})
+                    site_id=user["site_id"], details={"date": date_str, "with_kasalar": True})
     return {"ok": True}
 
 
