@@ -1,0 +1,109 @@
+{
+  "project_name": "iGaming Cash Flow Dashboard",
+  "theme": "dark",
+  "typography": {
+    "fonts": {
+      "headings": "Cabinet Grotesk, sans-serif",
+      "body": "Manrope, sans-serif",
+      "data": "JetBrains Mono, monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl tracking-tighter font-medium text-white",
+      "h2": "text-2xl tracking-tight font-medium text-white",
+      "h3": "text-xl tracking-tight font-medium text-white",
+      "h4": "text-lg font-medium text-neutral-300",
+      "kpi_value": "text-4xl font-light tracking-tighter text-white font-data",
+      "body": "text-sm text-neutral-400 font-body",
+      "table_header": "text-xs uppercase tracking-[0.2em] font-medium text-neutral-500",
+      "table_data": "text-sm text-neutral-300 font-data"
+    },
+    "instructions_to_main_agent": "Import Cabinet Grotesk (fontsource), Manrope (Google Fonts), and JetBrains Mono (Google Fonts). Apply 'JetBrains Mono' specifically to any numeric values, balances, percentages, and table data cells to ensure tabular lining and financial precision."
+  },
+  "colors": {
+    "archetype": "ARCHETYPE 4: SWISS & HIGH-CONTRAST + TRADING TERMINAL",
+    "palette": {
+      "background": "#050505",
+      "surface": "#0F0F0F",
+      "surface_hover": "#1A1A1A",
+      "border": "#222222",
+      "text_primary": "#FFFFFF",
+      "text_secondary": "#A1A1AA",
+      "accent_positive": "#00FF66",
+      "accent_negative": "#FF3366",
+      "accent_neutral": "#00E5FF",
+      "accent_brand": "#FACC15"
+    },
+    "tailwind_vars": {
+      "dark": {
+        "--background": "0 0% 2%",
+        "--foreground": "0 0% 100%",
+        "--card": "0 0% 6%",
+        "--card-foreground": "0 0% 100%",
+        "--popover": "0 0% 6%",
+        "--popover-foreground": "0 0% 100%",
+        "--primary": "53 98% 53%",
+        "--primary-foreground": "0 0% 9%",
+        "--secondary": "0 0% 10%",
+        "--secondary-foreground": "0 0% 100%",
+        "--muted": "0 0% 15%",
+        "--muted-foreground": "0 0% 65%",
+        "--accent": "0 0% 15%",
+        "--accent-foreground": "0 0% 100%",
+        "--destructive": "345 100% 60%",
+        "--destructive-foreground": "0 0% 100%",
+        "--success": "144 100% 50%",
+        "--success-foreground": "0 0% 0%",
+        "--border": "0 0% 15%",
+        "--input": "0 0% 15%",
+        "--ring": "53 98% 53%",
+        "--chart-1": "144 100% 50%",
+        "--chart-2": "345 100% 60%",
+        "--chart-3": "186 100% 50%",
+        "--chart-4": "53 98% 53%",
+        "--chart-5": "280 100% 70%"
+      }
+    },
+    "instructions_to_main_agent": "Overwrite the dark mode tailwind variables in index.css with the provided tailwind_vars. Make the background deep obsidian (#050505). Use pure white for data text. Reserve Electric Green (--chart-1) exclusively for Yatırım (Deposit)/Profit, Signal Red (--chart-2) exclusively for Çekim (Withdrawal)/Loss, and Cyan/Yellow for neutral/cash flow distribution. Do not use generic full-screen gradients. Apply color structurally."
+  },
+  "visual_enhancers": {
+    "surfaces": "GRID BORDERS (The 'Technical' Look). Expose the skeleton. Dashboards should use border-collapse style layouts where possible. For standard cards, use flat background (var(--card)) with a crisp 1px solid border (var(--border)) and NO shadow.",
+    "effects": "Hover states must include a slight lift (-translate-y-[2px]) and the border color should brighten (e.g., hover:border-neutral-500) rather than relying on heavy shadows. Use text-shadow on KPI values to create a subtle terminal glow (e.g., drop-shadow-[0_0_8px_rgba(0,255,102,0.3)] for positive values).",
+    "instructions_to_main_agent": "Implement 'Grid Borders' strategy. Do not use rounded-3xl or soft neumorphism. Use rounded-sm or rounded-none for a sharp, trading-terminal aesthetic. Ensure text contrast is accessible."
+  },
+  "components": {
+    "button": "Pill-shaped or sharp-edged (rounded-sm). Dark surfaces with high-contrast text. Example: bg-primary text-black hover:bg-primary/90 font-medium tracking-tight. Add active:scale-95 transition.",
+    "kpi_card": "Flat surface, 1px border. Value uses JetBrains Mono. Include an indicator pill (e.g., '+12%') using the success/destructive colors with 10% opacity background.",
+    "data_table": "Dense. Header has tracking-[0.2em] uppercase text. Hover state on rows (hover:bg-white/[0.02]). Amounts must be strictly right-aligned using font-mono for decimal alignment.",
+    "charts": "Recharts. Remove default cartesian grid or make it highly transparent (stroke='rgba(255,255,255,0.05)'). Tooltips must have solid black backgrounds with 1px border and high-contrast text. Lines/Bars use the neon accent colors.",
+    "forms": "Use Shadcn Form, Input, Select. Inputs should have bg-transparent, border-b only (or full crisp 1px border), focus-visible:ring-1 focus-visible:ring-primary.",
+    "instructions_to_main_agent": "Do not build raw HTML components for complex interactions. Use Shadcn components for Select, Tabs, Dialog, Table, Calendar. Customization should strip away Vercel-like shadows and enforce the sharp, dark terminal aesthetic."
+  },
+  "layouts": {
+    "global": "Sidebar Navigation (Left) + Main Content (Right). The sidebar should be border-r border-border bg-background. Top Header should be sticky with a frosted glass effect (backdrop-blur-xl bg-background/80) to show scrolling context but with a solid 1px border-b.",
+    "grid_system": "MODE B: High Density Grid. grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-4.",
+    "spacing": "Tight for data relations (gap-2, p-4), generous between disconnected sections (py-12).",
+    "instructions_to_main_agent": "Main dashboard layout must place KPIs in a top row (col-span-1 or 2). Main Cash Flow chart spans large width (col-span-full lg:col-span-4). Distribution Pie/Donut (lg:col-span-2). Tables must be given ample vertical space (min-h-[400px])."
+  },
+  "motion": {
+    "transitions": "Use specific properties. transition-colors duration-200, transition-transform duration-200. NO 'transition-all'.",
+    "interactions": "Buttons and list items must scale slightly on click (active:scale-[0.98]).",
+    "entrance": "Staggered fade-up for dashboard elements. Grid items should animate in sequence using a simple framer-motion setup (if available) or CSS animations."
+  },
+  "accessibility": {
+    "contrast": "Ensure minimum 4.5:1 ratio. Pure white on #050505 exceeds this. Colored text (e.g., Red/Green values) must be brightened (e.g., text-green-400 instead of dark green) to remain legible on black.",
+    "testing": "All interactive elements, inputs, and tab triggers MUST include a data-testid attribute (e.g., data-testid='deposit-submit-btn', data-testid='kasa-maks-balance').",
+    "instructions_to_main_agent": "Ensure hover states explicitly change colors. Never rely on inheritance. Use focus:ring-2 focus:ring-primary focus:outline-none for keyboard navigation."
+  },
+  "media": {
+    "icons": "Use @phosphor-icons/react. Duotone weight for general navigation, Regular/Bold for data indicators. They fit the high-end technical aesthetic perfectly.",
+    "images": "Not highly relevant for a dense financial admin panel, but if user avatars or payment method logos are needed, ensure they are placed on dark backgrounds or have subtle white underlays if they are transparent dark logos.",
+    "instructions_to_main_agent": "Run: yarn add @phosphor-icons/react. Do not use generic emoji for financial data (no 💰 or 📈). Use Phosphor's precise geometric icons (e.g., ChartLineUp, Wallet, ArrowsLeftRight, Bank)."
+  },
+  "domain_specific_rules": {
+    "currency_formatting": "All monetary values must be formatted as TRY (₺) with exact 2 decimal precision using JetBrains Mono to align vertically.",
+    "color_coding": "Yatırım (Deposit) = Green. Çekim (Withdrawal) = Red. Komisyon (Commission) = Orange/Yellow. Kasa Transferi (Transfer) = Blue/Cyan. This consistency is NON-NEGOTIABLE.",
+    "language": "Turkish throughout interface (e.g., 'Toplam Yatırım', 'Nakit Akışı', 'Kasalar Arası Transfer').",
+    "forms": "Payment entry form must auto-calculate commission based on selected method (e.g., Payfix 8%). Provide a readonly 'Net Tutar' field."
+  },
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": "1. NO AI SLOP. Avoid centered generic layouts and generic soft gradients. 2. Implement the 'Trading Terminal' look: strict borders, pure dark backgrounds, high contrast neon data. 3. Use 'JetBrains Mono' for all numbers. 4. Strictly add data-testid to everything. 5. NEVER use transparent backgrounds where content scrolls underneath (use backdrop-blur + rgba). 6. Make charts responsive and visually match the theme (no white chart backgrounds). 7. Use sonner for toasts. 8. Ensure all table columns align logically (amounts right-aligned, dates centered or left, descriptions left)."
+}
