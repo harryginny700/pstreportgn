@@ -27,6 +27,12 @@ JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 12
 
+# Brute-force protection: track failed login attempts per email (in-memory)
+LOGIN_ATTEMPTS: dict = {}  # {email: {"count": int, "locked_until": datetime}}
+MAX_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+MIN_PASSWORD_LENGTH = 6
+
 app = FastAPI(title="Playspintech Finance API")
 api_router = APIRouter(prefix="/api")
 
@@ -317,11 +323,32 @@ def compute_commission(deposit: float, withdrawal: float, dep_pct: float, wd_pct
 @api_router.post("/auth/login")
 async def login(inp: LoginInput):
     email = inp.email.strip().lower()
+
+    # Brute-force check
+    entry = LOGIN_ATTEMPTS.get(email)
+    now = datetime.now(timezone.utc)
+    if entry and entry.get("locked_until") and now < entry["locked_until"]:
+        remaining = int((entry["locked_until"] - now).total_seconds() / 60) + 1
+        raise HTTPException(429, f"Çok fazla başarısız deneme. {remaining} dakika sonra tekrar deneyin.")
+
     user = await db.users.find_one({"email": email})
-    if not user or not user.get("active", True):
+    invalid = (not user) or (not user.get("active", True)) or (not verify_password(inp.password, user["password_hash"]))
+
+    if invalid:
+        # Increment attempts
+        e = LOGIN_ATTEMPTS.get(email, {"count": 0})
+        e["count"] = e.get("count", 0) + 1
+        if e["count"] >= MAX_ATTEMPTS:
+            e["locked_until"] = now + timedelta(minutes=LOCKOUT_MINUTES)
+            e["count"] = 0
+            LOGIN_ATTEMPTS[email] = e
+            raise HTTPException(429, f"Çok fazla başarısız deneme. {LOCKOUT_MINUTES} dakika sonra tekrar deneyin.")
+        LOGIN_ATTEMPTS[email] = e
         raise HTTPException(401, "E-posta veya şifre hatalı")
-    if not verify_password(inp.password, user["password_hash"]):
-        raise HTTPException(401, "E-posta veya şifre hatalı")
+
+    # Success: clear attempts
+    LOGIN_ATTEMPTS.pop(email, None)
+
     token = create_token(user["id"])
     user.pop("_id", None)
     user.pop("password_hash", None)
@@ -465,6 +492,10 @@ async def list_users(user: dict = Depends(require_admin)):
 @api_router.post("/admin/users")
 async def create_user(inp: UserCreateInput, user: dict = Depends(require_admin)):
     email = inp.email.strip().lower()
+    if "@" not in email or len(email) < 5:
+        raise HTTPException(400, "Geçerli bir e-posta girin")
+    if len(inp.password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(400, f"Şifre en az {MIN_PASSWORD_LENGTH} karakter olmalı")
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "Bu e-posta zaten kayıtlı")
     # Validation: platform admin or site user, not both
@@ -509,6 +540,8 @@ async def update_user(uid_: str, inp: UserUpdateInput, user: dict = Depends(requ
         update["name"] = inp.name
         changes.append("name")
     if inp.password:
+        if len(inp.password) < MIN_PASSWORD_LENGTH:
+            raise HTTPException(400, f"Şifre en az {MIN_PASSWORD_LENGTH} karakter olmalı")
         update["password_hash"] = hash_password(inp.password)
         changes.append("password")
     if inp.active is not None and inp.active != target.get("active"):
