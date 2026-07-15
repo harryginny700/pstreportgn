@@ -38,10 +38,26 @@ export default function Reports() {
   useEffect(() => { loadMonthly(); /* eslint-disable-next-line */ }, [year, month]);
   useEffect(() => { loadDaily(); /* eslint-disable-next-line */ }, [dailyDate]);
 
-  const exportMonthly = () => window.open(`${API}/export/monthly-report?year=${year}&month=${month}`, "_blank");
+  const downloadFile = async (url, filename) => {
+    try {
+      const r = await api.get(url, { responseType: "blob" });
+      const blob = new Blob([r.data], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+    } catch (e) {
+      toast.error("İndirme başarısız");
+    }
+  };
+
+  const exportMonthly = () => downloadFile(`/export/monthly-report?year=${year}&month=${month}`, `rapor_${year}_${String(month).padStart(2,"0")}.csv`);
   const exportRange = () => {
     if (!monthly) return;
-    window.open(`${API}/export/transactions?date_from=${monthly.range.from}&date_to=${monthly.range.to}`, "_blank");
+    downloadFile(`/export/transactions?date_from=${monthly.range.from}&date_to=${monthly.range.to}`, `islemler_${monthly.range.from}_${monthly.range.to}.csv`);
   };
 
   const doRollover = async () => {
