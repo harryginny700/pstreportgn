@@ -82,7 +82,14 @@ export default function Layout() {
     (inAdmin ? adminNav : siteNav).find(
       (n) => (n.end ? n.to === location.pathname : location.pathname.startsWith(n.to))
     );
-  const currentLabelText = currentLabel ? t(currentLabel.labelKey) : (inAdmin ? "Admin" : t("nav.dashboard"));
+  let currentLabelText;
+  if (location.pathname === "/profil") {
+    currentLabelText = t("nav.profil");
+  } else if (currentLabel) {
+    currentLabelText = t(currentLabel.labelKey);
+  } else {
+    currentLabelText = inAdmin ? "Admin" : t("nav.dashboard");
+  }
 
   return (
     <div className="min-h-screen flex bg-background text-foreground" data-testid="app-shell">

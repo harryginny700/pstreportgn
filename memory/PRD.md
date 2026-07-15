@@ -35,9 +35,22 @@ Turkish iGaming operator finance dashboard. Playspintech = provider (parent bran
 - Cascade delete: site removal wipes all its data + users
 - Full tenant isolation verified by tests (28/28 pass)
 
+### v2.1 - Recent Additions (Feb 2026)
+- Password reset flow + admin audit logs
+- Dark/Light theme (persisted, respects system preference)
+- Mobile responsive layout (drawer menu, mobile grids)
+- Custom seed defaults (BP KASA, MULTİPAY KASA, etc.)
+- Monthly Rollover (Devir) system with archived snapshots (/api/rollovers/execute)
+- Security: brute-force protection, minimum password length, lockout
+- Global rename: "Krediler" → "Manueller"
+- CSV download auth fix (axios blob response)
+- Per-site Telegram Bot integration (custom formatted daily reports)
+- **i18n TR/EN language toggle** (i18n context + shared Layout & Login translated; toggle in topbar & login page top-right; localStorage-persisted `pst_lang`; default TR)
+
 ## Backlog (P1/P2)
 - P1: Password change / forgot password flow
 - P1: Editable admin overview site cards (rename inline)
+- P1: Extend i18n dictionary to page bodies (Dashboard, DailyEntry, CashRegisters, Manueller, Giderler, Transferler, Raporlar, Devirler, Ayarlar, AdminHome, Profile) — currently these still render Turkish body text regardless of TR/EN toggle
 - P2: Email invitation flow (send credentials via Resend)
 - P2: Audit log for admin actions
 - P2: Excel export (xlsx with formulas)
