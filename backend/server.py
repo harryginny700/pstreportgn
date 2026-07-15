@@ -1303,6 +1303,8 @@ async def _seed_default_site_data(site_id: str):
         ("PAYLUX KASA", 3),
         ("JET KASA", 4),
         ("NEO KASA", 5),
+        ("KARTAL KASA", 6),
+        ("MARCO KASA", 7),
     ]
     kasa_ids = {}
     for name, order in kasalar:
@@ -1313,8 +1315,8 @@ async def _seed_default_site_data(site_id: str):
     methods = [
         # (name, kasa, deposit_pct, withdrawal_pct)
         ("BP HAVALE",         "BP KASA",       7,    0),
-        ("MULTİPAY BANKPAY",  "MULTİPAY KASA", 5,    0.5),
-        ("MULTİPAY BANKİN",   "MULTİPAY KASA", 5,    0.5),
+        ("MULTİPAY BANKPAY",  "MULTİPAY KASA", 5,    5),
+        ("MULTİPAY BANKİN",   "MULTİPAY KASA", 5,    5),
         ("MULTİPAY PAPARA",   "MULTİPAY KASA", 6.5,  1),
         ("PAYLUX HAVALE",     "PAYLUX KASA",   3.5,  3),
         ("PAYLUX KRİPTO",     "PAYLUX KASA",   2.5,  0.5),
