@@ -137,12 +137,7 @@ export default function Settings() {
   };
 
   const reseed = async () => {
-    if (!confirm("TÜM veriler silinip Excel'deki varsayılan yapıya sıfırlanacak. Emin misiniz?")) return;
-    try {
-      await api.post("/seed", null, { params: { force: true } });
-      toast.success("Veriler sıfırlandı");
-      load();
-    } catch (e) { toast.error("Hata"); }
+    toast.info("Bu özellik artık Admin Panel'de. Site oluştururken 'Varsayılan Yükle' butonunu kullanın.");
   };
 
   return (
