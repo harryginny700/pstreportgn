@@ -1742,7 +1742,6 @@ def _fmt_credit_created_message(site_name: str, credit: dict) -> str:
     L = [f"💳 *{site_name}* — Yeni Kredi Tanımlandı", ""]
     L.append(f"📅 Tarih: `{credit.get('date')}`")
     L.append(f"💰 Kredi Miktarı: `{_fmt_try(credit.get('amount', 0))}`")
-    L.append(f"📊 Yüzde: `%{credit.get('commission_pct', 0)}`")
     L.append(f"🧾 Oluşan Borç: `{_fmt_try(credit.get('debt', 0))}`")
     if credit.get("note"):
         L.append(f"📝 Not: _{credit['note']}_")
