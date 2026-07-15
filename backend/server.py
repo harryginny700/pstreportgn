@@ -1114,6 +1114,57 @@ async def export_monthly_report(
                              headers={"Content-Disposition": f'attachment; filename="rapor_{year}_{month:02d}.csv"'})
 
 
+# ============== SEED / DEFAULT DATA ==============
+
+async def _seed_default_site_data(site_id: str):
+    kasalar = [
+        ("MAKSİ KASA", 1), ("PLUS KASA", 2), ("FTN KASA", 3),
+        ("TONY KASA", 4), ("TS KASA", 5), ("KARTAL KASA", 6),
+        ("ALEX KASA", 7), ("KORAY KASA", 8),
+    ]
+    kasa_ids = {}
+    for name, order in kasalar:
+        obj = CashRegister(site_id=site_id, name=name, type="main", order=order)
+        await db.cash_registers.insert_one(obj.model_dump())
+        kasa_ids[name] = obj.id
+
+    methods = [
+        ("MAKSİ PAYFİX", "MAKSİ KASA", 8, 1),
+        ("MAKSİ PAPARA", "MAKSİ KASA", 8, 0),
+        ("MAKSİ HAVALE", "MAKSİ KASA", 9, 1),
+        ("MAKSİ KRİPTO", "MAKSİ KASA", 2, 3),
+        ("MAKSİ PEP", "MAKSİ KASA", 7, 0),
+        ("MAKSİ PAYBOL&POPYPARA", "MAKSİ KASA", 6, 0),
+        ("MAKSİ OZANPAY", "MAKSİ KASA", 6, 1),
+        ("MAKSİ KREDİ KARTI", "MAKSİ KASA", 10, 0),
+        ("PLUS HAVALE", "PLUS KASA", 9, 0),
+        ("PLUS PAPARA", "PLUS KASA", 8, 0),
+        ("FTN", "FTN KASA", 0, 0),
+    ]
+    for i, (name, kasa, dep, wd) in enumerate(methods):
+        obj = PaymentMethod(site_id=site_id, name=name,
+                            cash_register_id=kasa_ids[kasa],
+                            deposit_commission_pct=dep,
+                            withdrawal_commission_pct=wd, order=i)
+        await db.payment_methods.insert_one(obj.model_dump())
+
+    for i, name in enumerate(["OKİCEY", "MARDİNLİ47", "KEMALGEZER", "MUTOK35"]):
+        obj = Debtor(site_id=site_id, name=name, order=i)
+        await db.debtors.insert_one(obj.model_dump())
+
+
+@api_router.post("/admin/sites/{sid}/seed-defaults")
+async def seed_defaults(sid: str, user: dict = Depends(require_admin)):
+    site = await db.sites.find_one({"id": sid})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+    existing = await db.cash_registers.count_documents({"site_id": sid})
+    if existing > 0:
+        raise HTTPException(400, "Bu sitede zaten veri var")
+    await _seed_default_site_data(sid)
+    return {"ok": True}
+
+
 # ============== ROOT ==============
 
 @api_router.get("/")
@@ -1178,56 +1229,6 @@ async def seed_admin_and_migrate():
         cr_count = await db.cash_registers.count_documents({"site_id": etobahis.id})
         if cr_count == 0:
             await _seed_default_site_data(etobahis.id)
-
-
-async def _seed_default_site_data(site_id: str):
-    kasalar = [
-        ("MAKSİ KASA", 1), ("PLUS KASA", 2), ("FTN KASA", 3),
-        ("TONY KASA", 4), ("TS KASA", 5), ("KARTAL KASA", 6),
-        ("ALEX KASA", 7), ("KORAY KASA", 8),
-    ]
-    kasa_ids = {}
-    for name, order in kasalar:
-        obj = CashRegister(site_id=site_id, name=name, type="main", order=order)
-        await db.cash_registers.insert_one(obj.model_dump())
-        kasa_ids[name] = obj.id
-
-    methods = [
-        ("MAKSİ PAYFİX", "MAKSİ KASA", 8, 1),
-        ("MAKSİ PAPARA", "MAKSİ KASA", 8, 0),
-        ("MAKSİ HAVALE", "MAKSİ KASA", 9, 1),
-        ("MAKSİ KRİPTO", "MAKSİ KASA", 2, 3),
-        ("MAKSİ PEP", "MAKSİ KASA", 7, 0),
-        ("MAKSİ PAYBOL&POPYPARA", "MAKSİ KASA", 6, 0),
-        ("MAKSİ OZANPAY", "MAKSİ KASA", 6, 1),
-        ("MAKSİ KREDİ KARTI", "MAKSİ KASA", 10, 0),
-        ("PLUS HAVALE", "PLUS KASA", 9, 0),
-        ("PLUS PAPARA", "PLUS KASA", 8, 0),
-        ("FTN", "FTN KASA", 0, 0),
-    ]
-    for i, (name, kasa, dep, wd) in enumerate(methods):
-        obj = PaymentMethod(site_id=site_id, name=name,
-                            cash_register_id=kasa_ids[kasa],
-                            deposit_commission_pct=dep,
-                            withdrawal_commission_pct=wd, order=i)
-        await db.payment_methods.insert_one(obj.model_dump())
-
-    for i, name in enumerate(["OKİCEY", "MARDİNLİ47", "KEMALGEZER", "MUTOK35"]):
-        obj = Debtor(site_id=site_id, name=name, order=i)
-        await db.debtors.insert_one(obj.model_dump())
-
-
-# Admin can also seed default data into a newly created site
-@api_router.post("/admin/sites/{sid}/seed-defaults")
-async def seed_defaults(sid: str, user: dict = Depends(require_admin)):
-    site = await db.sites.find_one({"id": sid})
-    if not site:
-        raise HTTPException(404, "Site bulunamadı")
-    existing = await db.cash_registers.count_documents({"site_id": sid})
-    if existing > 0:
-        raise HTTPException(400, "Bu sitede zaten veri var")
-    await _seed_default_site_data(sid)
-    return {"ok": True}
 
 
 @app.on_event("startup")
