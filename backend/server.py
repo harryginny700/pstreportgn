@@ -1251,6 +1251,8 @@ async def _seed_default_site_data(site_id: str):
         ("BP KASA", 1),
         ("MULTİPAY KASA", 2),
         ("PAYLUX KASA", 3),
+        ("JET KASA", 4),
+        ("NEO KASA", 5),
     ]
     kasa_ids = {}
     for name, order in kasalar:
@@ -1262,16 +1264,16 @@ async def _seed_default_site_data(site_id: str):
         # (name, kasa, deposit_pct, withdrawal_pct)
         ("BP HAVALE",         "BP KASA",       7,    0),
         ("MULTİPAY BANKPAY",  "MULTİPAY KASA", 5,    0.5),
-        ("MULTİPAY BANKİN",   "BP KASA",       5,    0.5),
-        ("MULTİPAY PAPARA",   "BP KASA",       6.5,  1),
-        ("PAYLUX HAVALE",     "BP KASA",       3.5,  3),
-        ("PAYLUX KRİPTO",     "BP KASA",       2.5,  0.5),
-        ("JET HAVALE",        "BP KASA",       5,    0),
-        ("JET KRİPTO",        "BP KASA",       2,    2),
-        ("JET QR",            "BP KASA",       7,    1),
-        ("JET KREDİ KARTI",   "MULTİPAY KASA", 12,   0),
-        ("NEO HAVALE",        "MULTİPAY KASA", 6,    1),
-        ("NEO KRİPTO",        "PAYLUX KASA",   2,    2),
+        ("MULTİPAY BANKİN",   "MULTİPAY KASA", 5,    0.5),
+        ("MULTİPAY PAPARA",   "MULTİPAY KASA", 6.5,  1),
+        ("PAYLUX HAVALE",     "PAYLUX KASA",   3.5,  3),
+        ("PAYLUX KRİPTO",     "PAYLUX KASA",   2.5,  0.5),
+        ("JET HAVALE",        "JET KASA",      5,    0),
+        ("JET KRİPTO",        "JET KASA",      2,    2),
+        ("JET QR",            "JET KASA",      7,    1),
+        ("JET KREDİ KARTI",   "JET KASA",      12,   0),
+        ("NEO HAVALE",        "NEO KASA",      6,    1),
+        ("NEO KRİPTO",        "NEO KASA",      2,    2),
     ]
     for i, (name, kasa, dep, wd) in enumerate(methods):
         obj = PaymentMethod(site_id=site_id, name=name,
