@@ -6,13 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { AlertTriangle, RefreshCw, Save } from "lucide-react";
+import { AlertTriangle, RefreshCw, Save, Plus, Trash2 } from "lucide-react";
 
 export default function Settings() {
   const [methods, setMethods] = useState([]);
   const [kasalar, setKasalar] = useState([]);
   const [debtors, setDebtors] = useState([]);
-  const [editing, setEditing] = useState({}); // pm.id -> { deposit_commission_pct, withdrawal_commission_pct }
+  const [editing, setEditing] = useState({}); // pm.id -> local edit map
+  const [newPm, setNewPm] = useState({ name: "", cash_register_id: "", deposit_commission_pct: 0, withdrawal_commission_pct: 0 });
+  const [newKasa, setNewKasa] = useState({ name: "", initial_balance: 0 });
+  const [newDebtor, setNewDebtor] = useState({ name: "", initial_balance: 0 });
 
   const load = async () => {
     const [m, k, d] = await Promise.all([
@@ -23,6 +26,7 @@ export default function Settings() {
     setMethods(m.data);
     setKasalar(k.data);
     setDebtors(d.data);
+    setEditing({});
   };
   useEffect(() => { load(); }, []);
 
@@ -32,8 +36,10 @@ export default function Settings() {
 
   const savePm = async (m) => {
     const edit = editing[m.id] || {};
+    const name = (edit.name ?? m.name).trim();
+    if (!name) return toast.error("İsim boş olamaz");
     const payload = {
-      name: edit.name ?? m.name,
+      name,
       cash_register_id: edit.cash_register_id ?? m.cash_register_id,
       deposit_commission_pct: Number(edit.deposit_commission_pct ?? m.deposit_commission_pct),
       withdrawal_commission_pct: Number(edit.withdrawal_commission_pct ?? m.withdrawal_commission_pct),
@@ -41,8 +47,77 @@ export default function Settings() {
     };
     try {
       await api.put(`/payment-methods/${m.id}`, payload);
-      toast.success(`${m.name} güncellendi`);
-      setEditing((p) => { const c = {...p}; delete c[m.id]; return c; });
+      toast.success(`${name} güncellendi`);
+      load();
+    } catch (e) { toast.error("Hata"); }
+  };
+
+  const deletePm = async (m) => {
+    if (!confirm(`${m.name} silinsin mi? Bu yönteme ait geçmiş işlemler DB'de kalır ama listelenmez.`)) return;
+    try {
+      await api.delete(`/payment-methods/${m.id}`);
+      toast.success("Silindi");
+      load();
+    } catch (e) { toast.error("Hata"); }
+  };
+
+  const addPm = async () => {
+    if (!newPm.name.trim()) return toast.error("İsim girin");
+    if (!newPm.cash_register_id) return toast.error("Bağlı kasa seçin");
+    try {
+      await api.post("/payment-methods", {
+        ...newPm,
+        name: newPm.name.trim(),
+        deposit_commission_pct: Number(newPm.deposit_commission_pct) || 0,
+        withdrawal_commission_pct: Number(newPm.withdrawal_commission_pct) || 0,
+      });
+      toast.success("Ödeme yöntemi eklendi");
+      setNewPm({ name: "", cash_register_id: "", deposit_commission_pct: 0, withdrawal_commission_pct: 0 });
+      load();
+    } catch (e) { toast.error("Hata"); }
+  };
+
+  const addKasa = async () => {
+    if (!newKasa.name.trim()) return toast.error("İsim girin");
+    try {
+      await api.post("/cash-registers", {
+        name: newKasa.name.trim(),
+        type: "main",
+        initial_balance: Number(newKasa.initial_balance) || 0,
+      });
+      toast.success("Kasa eklendi");
+      setNewKasa({ name: "", initial_balance: 0 });
+      load();
+    } catch (e) { toast.error("Hata"); }
+  };
+
+  const deleteKasa = async (k) => {
+    if (!confirm(`${k.name} silinsin mi?`)) return;
+    try {
+      await api.delete(`/cash-registers/${k.id}`);
+      toast.success("Silindi");
+      load();
+    } catch (e) { toast.error("Hata"); }
+  };
+
+  const addDebtor = async () => {
+    if (!newDebtor.name.trim()) return toast.error("İsim girin");
+    try {
+      await api.post("/debtors", {
+        name: newDebtor.name.trim(),
+        initial_balance: Number(newDebtor.initial_balance) || 0,
+      });
+      toast.success("Kredici eklendi");
+      setNewDebtor({ name: "", initial_balance: 0 });
+      load();
+    } catch (e) { toast.error("Hata"); }
+  };
+
+  const deleteDebtor = async (d) => {
+    if (!confirm(`${d.name} silinsin mi?`)) return;
+    try {
+      await api.delete(`/debtors/${d.id}`);
+      toast.success("Silindi");
       load();
     } catch (e) { toast.error("Hata"); }
   };
@@ -56,8 +131,6 @@ export default function Settings() {
     } catch (e) { toast.error("Hata"); }
   };
 
-  const kasaMap = Object.fromEntries(kasalar.map((k) => [k.id, k.name]));
-
   return (
     <div className="space-y-8" data-testid="ayarlar-page">
       {/* Payment methods */}
@@ -67,17 +140,24 @@ export default function Settings() {
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Yöntem</TableHead>
+                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Yöntem İsmi</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Bağlı Kasa</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-center">Yatırım Kom. %</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-center">Çekim Kom. %</TableHead>
-                <TableHead className="w-20"></TableHead>
+                <TableHead className="w-32"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {methods.map((m) => (
                 <TableRow key={m.id} className="border-border hover:bg-white/[0.02]" data-testid={`pm-row-${m.id}`}>
-                  <TableCell className="font-medium text-white text-sm">{m.name}</TableCell>
+                  <TableCell>
+                    <Input
+                      defaultValue={m.name}
+                      onChange={(e) => setEditField(m.id, "name", e.target.value)}
+                      className="max-w-xs bg-transparent border-border rounded-sm h-8 text-sm"
+                      data-testid={`pm-name-${m.id}`}
+                    />
+                  </TableCell>
                   <TableCell>
                     <Select
                       value={editing[m.id]?.cash_register_id ?? m.cash_register_id ?? ""}
@@ -110,12 +190,48 @@ export default function Settings() {
                     />
                   </TableCell>
                   <TableCell>
-                    <Button size="sm" onClick={() => savePm(m)} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95" data-testid={`pm-save-${m.id}`}>
-                      <Save className="w-3 h-3" /> Kaydet
-                    </Button>
+                    <div className="flex gap-1.5 justify-end">
+                      <Button size="sm" onClick={() => savePm(m)} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95" data-testid={`pm-save-${m.id}`}>
+                        <Save className="w-3 h-3" /> Kaydet
+                      </Button>
+                      <Button size="icon" variant="ghost" onClick={() => deletePm(m)} className="h-8 w-8 rounded-sm text-neutral-500 hover:text-red-400" data-testid={`pm-delete-${m.id}`}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
+              {/* Add new payment method row */}
+              <TableRow className="border-border bg-secondary/30 hover:bg-secondary/40" data-testid="pm-add-row">
+                <TableCell>
+                  <Input
+                    placeholder="Yeni yöntem ismi..."
+                    value={newPm.name}
+                    onChange={(e) => setNewPm({ ...newPm, name: e.target.value })}
+                    className="max-w-xs bg-transparent border-border rounded-sm h-8 text-sm"
+                    data-testid="pm-new-name"
+                  />
+                </TableCell>
+                <TableCell>
+                  <Select value={newPm.cash_register_id} onValueChange={(v) => setNewPm({ ...newPm, cash_register_id: v })}>
+                    <SelectTrigger className="w-48 bg-transparent border-border rounded-sm h-8 text-xs" data-testid="pm-new-kasa"><SelectValue placeholder="Kasa seçin" /></SelectTrigger>
+                    <SelectContent>
+                      {kasalar.map((k) => <SelectItem key={k.id} value={k.id}>{k.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="text-center">
+                  <Input type="number" step="0.1" value={newPm.deposit_commission_pct} onChange={(e) => setNewPm({ ...newPm, deposit_commission_pct: e.target.value })} className="w-20 mx-auto text-center font-data bg-transparent border-border rounded-sm h-8 text-xs" data-testid="pm-new-dep" />
+                </TableCell>
+                <TableCell className="text-center">
+                  <Input type="number" step="0.1" value={newPm.withdrawal_commission_pct} onChange={(e) => setNewPm({ ...newPm, withdrawal_commission_pct: e.target.value })} className="w-20 mx-auto text-center font-data bg-transparent border-border rounded-sm h-8 text-xs" data-testid="pm-new-wd" />
+                </TableCell>
+                <TableCell>
+                  <Button size="sm" onClick={addPm} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 ml-auto flex" data-testid="pm-add-submit">
+                    <Plus className="w-3 h-3" /> Ekle
+                  </Button>
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </div>
@@ -130,11 +246,24 @@ export default function Settings() {
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Kasa İsmi</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-right">Açılış Bakiyesi</TableHead>
-                <TableHead className="w-24"></TableHead>
+                <TableHead className="w-32"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {kasalar.map((k) => <KasaRow key={k.id} kasa={k} onSaved={load} />)}
+              {kasalar.map((k) => <KasaRow key={k.id} kasa={k} onSaved={load} onDelete={() => deleteKasa(k)} />)}
+              <TableRow className="border-border bg-secondary/30 hover:bg-secondary/40" data-testid="kasa-add-row">
+                <TableCell>
+                  <Input placeholder="Yeni kasa ismi..." value={newKasa.name} onChange={(e) => setNewKasa({ ...newKasa, name: e.target.value })} className="max-w-xs bg-transparent border-border rounded-sm h-8 text-sm" data-testid="kasa-new-name" />
+                </TableCell>
+                <TableCell className="text-right">
+                  <Input type="number" step="0.01" value={newKasa.initial_balance} onChange={(e) => setNewKasa({ ...newKasa, initial_balance: e.target.value })} className="w-36 ml-auto text-right font-data bg-transparent border-border rounded-sm h-8 text-xs" data-testid="kasa-new-initial" />
+                </TableCell>
+                <TableCell>
+                  <Button size="sm" onClick={addKasa} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 ml-auto flex" data-testid="kasa-add-submit">
+                    <Plus className="w-3 h-3" /> Ekle
+                  </Button>
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </div>
@@ -149,11 +278,24 @@ export default function Settings() {
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Kredici İsmi</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-right">Açılış Bakiyesi</TableHead>
-                <TableHead className="w-24"></TableHead>
+                <TableHead className="w-32"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {debtors.map((d) => <DebtorRow key={d.id} debtor={d} onSaved={load} />)}
+              {debtors.map((d) => <DebtorRow key={d.id} debtor={d} onSaved={load} onDelete={() => deleteDebtor(d)} />)}
+              <TableRow className="border-border bg-secondary/30 hover:bg-secondary/40" data-testid="debtor-add-row">
+                <TableCell>
+                  <Input placeholder="Yeni kredici ismi..." value={newDebtor.name} onChange={(e) => setNewDebtor({ ...newDebtor, name: e.target.value })} className="max-w-xs bg-transparent border-border rounded-sm h-8 text-sm" data-testid="debtor-new-name" />
+                </TableCell>
+                <TableCell className="text-right">
+                  <Input type="number" step="0.01" value={newDebtor.initial_balance} onChange={(e) => setNewDebtor({ ...newDebtor, initial_balance: e.target.value })} className="w-36 ml-auto text-right font-data bg-transparent border-border rounded-sm h-8 text-xs" data-testid="debtor-new-initial" />
+                </TableCell>
+                <TableCell>
+                  <Button size="sm" onClick={addDebtor} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 ml-auto flex" data-testid="debtor-add-submit">
+                    <Plus className="w-3 h-3" /> Ekle
+                  </Button>
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </div>
@@ -176,7 +318,7 @@ export default function Settings() {
   );
 }
 
-function KasaRow({ kasa, onSaved }) {
+function KasaRow({ kasa, onSaved, onDelete }) {
   const [name, setName] = useState(kasa.name);
   const [initial, setInitial] = useState(kasa.initial_balance || 0);
   const [saving, setSaving] = useState(false);
@@ -222,21 +364,26 @@ function KasaRow({ kasa, onSaved }) {
         />
       </TableCell>
       <TableCell>
-        <Button
-          size="sm"
-          onClick={save}
-          disabled={!changed || saving}
-          className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 disabled:opacity-40"
-          data-testid={`kasa-save-${kasa.id}`}
-        >
-          <Save className="w-3 h-3" /> Kaydet
-        </Button>
+        <div className="flex gap-1.5 justify-end">
+          <Button
+            size="sm"
+            onClick={save}
+            disabled={!changed || saving}
+            className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 disabled:opacity-40"
+            data-testid={`kasa-save-${kasa.id}`}
+          >
+            <Save className="w-3 h-3" /> Kaydet
+          </Button>
+          <Button size="icon" variant="ghost" onClick={onDelete} className="h-8 w-8 rounded-sm text-neutral-500 hover:text-red-400" data-testid={`kasa-delete-${kasa.id}`}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );
 }
 
-function DebtorRow({ debtor, onSaved }) {
+function DebtorRow({ debtor, onSaved, onDelete }) {
   const [name, setName] = useState(debtor.name);
   const [initial, setInitial] = useState(debtor.initial_balance || 0);
   const [saving, setSaving] = useState(false);
@@ -280,15 +427,20 @@ function DebtorRow({ debtor, onSaved }) {
         />
       </TableCell>
       <TableCell>
-        <Button
-          size="sm"
-          onClick={save}
-          disabled={!changed || saving}
-          className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 disabled:opacity-40"
-          data-testid={`debtor-save-${debtor.id}`}
-        >
-          <Save className="w-3 h-3" /> Kaydet
-        </Button>
+        <div className="flex gap-1.5 justify-end">
+          <Button
+            size="sm"
+            onClick={save}
+            disabled={!changed || saving}
+            className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-8 gap-1 active:scale-95 disabled:opacity-40"
+            data-testid={`debtor-save-${debtor.id}`}
+          >
+            <Save className="w-3 h-3" /> Kaydet
+          </Button>
+          <Button size="icon" variant="ghost" onClick={onDelete} className="h-8 w-8 rounded-sm text-neutral-500 hover:text-red-400" data-testid={`debtor-delete-${debtor.id}`}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );
