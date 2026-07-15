@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { HandCoins, Plus, Trash2, Check, RotateCcw, Loader2, Percent, Landmark, Send } from "lucide-react";
+import { HandCoins, Plus, Trash2, Check, RotateCcw, Loader2, Percent, Landmark, Send, Archive, ArchiveRestore } from "lucide-react";
 
 export default function AdminCredits() {
   const [sites, setSites] = useState([]);
@@ -15,6 +15,7 @@ export default function AdminCredits() {
   const [loading, setLoading] = useState(true);
   const [filterSite, setFilterSite] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [viewArchived, setViewArchived] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ site_id: "", amount: "", commission_pct: "", note: "" });
   const [saving, setSaving] = useState(false);
@@ -30,6 +31,7 @@ export default function AdminCredits() {
       const params = {};
       if (filterSite !== "all") params.site_id = filterSite;
       if (filterStatus !== "all") params.status = filterStatus;
+      if (viewArchived) params.archived = true;
       const [s, r] = await Promise.all([
         api.get("/admin/sites"),
         api.get("/admin/site-credits", { params }),
@@ -43,7 +45,7 @@ export default function AdminCredits() {
     }
   };
 
-  useEffect(() => { load(); }, [filterSite, filterStatus]);
+  useEffect(() => { load(); }, [filterSite, filterStatus, viewArchived]);
 
   const previewDebt = useMemo(() => {
     const a = parseFloat(form.amount || 0);
@@ -136,6 +138,18 @@ export default function AdminCredits() {
     }
   };
 
+  const archive = async (row) => {
+    const next = !row.archived;
+    if (next && !confirm(`${row.site_name} — ${fmtTRY(row.amount)} kredisi arşivlensin mi?`)) return;
+    try {
+      await api.patch(`/admin/site-credits/${row.id}/archive`, null, { params: { archived: next } });
+      toast.success(next ? "Arşivlendi" : "Arşivden çıkarıldı");
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Güncellenemedi");
+    }
+  };
+
   const totals = useMemo(() => {
     let unpaid = 0, paid = 0, totalAmount = 0, totalDebt = 0;
     rows.forEach(r => {
@@ -181,6 +195,14 @@ export default function AdminCredits() {
               <SelectItem value="paid">Ödendi</SelectItem>
             </SelectContent>
           </Select>
+          <Button
+            variant="ghost"
+            onClick={() => setViewArchived(v => !v)}
+            className={`h-9 rounded-sm text-xs gap-1.5 border ${viewArchived ? "border-primary text-primary" : "border-border text-muted-foreground"}`}
+            data-testid="ac-toggle-archived-view"
+          >
+            <Archive className="w-3.5 h-3.5" /> {viewArchived ? "Arşivi gizle" : "Arşivi göster"}
+          </Button>
         </div>
         <Button onClick={openAdd} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95" data-testid="ac-add-btn">
           <Plus className="w-3.5 h-3.5" /> Yeni Kredi
@@ -254,6 +276,9 @@ export default function AdminCredits() {
                         <RotateCcw className="w-3.5 h-3.5" />
                       </Button>
                     )}
+                    <Button size="sm" variant="ghost" onClick={() => archive(r)} className={`h-7 px-2 rounded-sm text-xs ${r.archived ? "text-primary" : "text-muted-foreground hover:text-foreground"}`} data-testid={`ac-archive-${r.id}`} title={r.archived ? "Arşivden çıkar" : "Arşivle"}>
+                      {r.archived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
+                    </Button>
                     <Button size="sm" variant="ghost" onClick={() => remove(r)} className="h-7 px-2 rounded-sm text-xs text-[hsl(345_100%_65%)] hover:text-[hsl(345_100%_75%)]" data-testid={`ac-delete-${r.id}`}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>

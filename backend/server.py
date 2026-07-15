@@ -228,9 +228,12 @@ class SiteCredit(BaseModel):
     payments: List[dict] = Field(default_factory=list)  # [{amount, date, paid_at, paid_by_email, note?}]
     note: Optional[str] = None
     status: str = "unpaid"  # "unpaid" | "partial" | "paid"
+    archived: bool = False
     date: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
     paid_at: Optional[str] = None  # borç tamamen ödendiği zaman
     paid_by_email: Optional[str] = None
+    archived_at: Optional[str] = None
+    archived_by_email: Optional[str] = None
     created_by_email: str
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -529,6 +532,7 @@ async def delete_site(sid: str, user: dict = Depends(require_admin)):
 async def list_site_credits(
     site_id: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
+    archived: Optional[bool] = False,
     user: dict = Depends(require_admin),
 ):
     q: dict = {}
@@ -536,6 +540,11 @@ async def list_site_credits(
         q["site_id"] = site_id
     if status_filter in ("paid", "unpaid", "partial"):
         q["status"] = status_filter
+    # By default exclude archived; if archived=true is passed, return only archived
+    if archived:
+        q["archived"] = True
+    else:
+        q["archived"] = {"$ne": True}
     docs = await db.site_credits.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     site_map = {s["id"]: s["name"] for s in await db.sites.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)}
     for d in docs:
@@ -662,6 +671,29 @@ async def toggle_site_credit_status(cid: str, status: str = Query(...), user: di
     await db.site_credits.update_one({"id": cid}, {"$set": updates})
     await log_audit(user, "site_credit.status", "site_credit", cid,
                     site_id=existing["site_id"], details={"status": status})
+    doc = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    site = await db.sites.find_one({"id": doc["site_id"]}, {"_id": 0, "name": 1})
+    doc["site_name"] = site.get("name") if site else "?"
+    return doc
+
+
+@api_router.patch("/admin/site-credits/{cid}/archive")
+async def archive_site_credit(cid: str, archived: bool = Query(True), user: dict = Depends(require_admin)):
+    """Toggle archive flag on a credit record. Archived records are hidden from default lists and dashboard."""
+    existing = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Kredi kaydı bulunamadı")
+    updates: dict = {"archived": archived}
+    if archived:
+        updates["archived_at"] = datetime.now(timezone.utc).isoformat()
+        updates["archived_by_email"] = user["email"]
+    else:
+        updates["archived_at"] = None
+        updates["archived_by_email"] = None
+    await db.site_credits.update_one({"id": cid}, {"$set": updates})
+    await log_audit(user, "site_credit.archive" if archived else "site_credit.unarchive",
+                    "site_credit", cid, site_id=existing["site_id"],
+                    details={"archived": archived})
     doc = await db.site_credits.find_one({"id": cid}, {"_id": 0})
     site = await db.sites.find_one({"id": doc["site_id"]}, {"_id": 0, "name": 1})
     doc["site_name"] = site.get("name") if site else "?"
@@ -1317,7 +1349,7 @@ async def dashboard(
     site = await db.sites.find_one({"id": target_site}, {"_id": 0})
 
     # Site Credit debt aggregation (admin-managed credits given by Playspintech to this site)
-    sc_docs = await db.site_credits.find({"site_id": target_site}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    sc_docs = await db.site_credits.find({"site_id": target_site, "archived": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(500)
     # normalize legacy records that may lack paid_amount / payments
     for c in sc_docs:
         c.setdefault("paid_amount", 0.0 if c.get("status") != "paid" else float(c.get("debt", 0)))
