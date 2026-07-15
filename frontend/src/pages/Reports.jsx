@@ -273,8 +273,8 @@ function DailyReportGrid({ data }) {
           <StatRow icon={Scale} label="Üyeler Yatırım-Çekim Farkı" value={memberDelta} tone={memberDelta >= 0 ? "green" : "red"} />
         </StatBlock>
 
-        {/* Manual block (Krediler) */}
-        <StatBlock accent="green" testId="stats-manual" icon={Coins} title="Manueller (Krediler)">
+        {/* Manual block */}
+        <StatBlock accent="green" testId="stats-manual" icon={Coins} title="Manueller">
           <StatRow icon={PlusCircle} label="Eklenen Manuel Toplamı" value={s.credit_added || 0} tone="cyan" />
           <StatRow icon={MinusCircle} label="Ödenen Manuel Toplamı" value={s.credit_paid || 0} tone="cyan" />
           <StatRow icon={Scale} label="Manueller Fark" value={manuelDelta} tone={manuelDelta >= 0 ? "green" : "red"} bold />

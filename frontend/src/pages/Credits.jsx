@@ -28,7 +28,7 @@ export default function Credits() {
   useEffect(() => { load(); }, []);
 
   const submit = async () => {
-    if (!form.debtor_id) return toast.error("Kredici seçin");
+    if (!form.debtor_id) return toast.error("Manuel sağlayıcı seçin");
     if (form.added <= 0 && form.paid <= 0) return toast.error("Eklenen veya ödenen tutar girin");
     try {
       await api.post("/credits", {
@@ -36,7 +36,7 @@ export default function Credits() {
         added: Number(form.added) || 0,
         paid: Number(form.paid) || 0,
       });
-      toast.success("Kredi hareketi kaydedildi");
+      toast.success("Manuel hareketi kaydedildi");
       setForm({ date: todayISO(), debtor_id: "", added: 0, paid: 0, member_name: "", cash_register_id: "", note: "" });
       load();
     } catch (e) {
@@ -79,14 +79,14 @@ export default function Credits() {
 
       {/* Add form */}
       <div className="border border-border rounded-sm bg-card p-4 md:p-5">
-        <h3 className="font-display text-lg text-foreground mb-4">Kredi Hareketi Ekle</h3>
+        <h3 className="font-display text-lg text-foreground mb-4">Manuel Hareketi Ekle</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 items-end">
           <div>
             <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Tarih</label>
             <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="bg-transparent border-border rounded-sm font-data h-9" data-testid="credit-date" />
           </div>
           <div>
-            <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Kredici</label>
+            <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Manuel Sağlayıcı</label>
             <Select value={form.debtor_id} onValueChange={(v) => setForm({ ...form, debtor_id: v })}>
               <SelectTrigger className="bg-transparent border-border rounded-sm h-9" data-testid="credit-debtor"><SelectValue placeholder="Seçin" /></SelectTrigger>
               <SelectContent>
@@ -127,7 +127,7 @@ export default function Credits() {
           <TableHeader>
             <TableRow className="border-border hover:bg-transparent">
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Tarih</TableHead>
-              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Kredici</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Manuel Sağlayıcı</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Üye</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Kasa</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-right">Eklenen</TableHead>

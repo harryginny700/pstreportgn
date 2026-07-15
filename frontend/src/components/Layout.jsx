@@ -31,7 +31,7 @@ const siteNav = [
   { to: "/", icon: LayoutDashboard, label: "Panel", testId: "nav-dashboard", end: true },
   { to: "/gunluk", icon: CalendarClock, label: "Günlük Giriş", testId: "nav-daily" },
   { to: "/kasalar", icon: Wallet, label: "Kasalar", testId: "nav-kasalar" },
-  { to: "/krediler", icon: Coins, label: "Krediler", testId: "nav-krediler" },
+  { to: "/krediler", icon: Coins, label: "Manueller", testId: "nav-krediler" },
   { to: "/giderler", icon: Receipt, label: "Giderler", testId: "nav-giderler" },
   { to: "/transferler", icon: ArrowLeftRight, label: "Transferler", testId: "nav-transferler" },
   { to: "/raporlar", icon: FileBarChart, label: "Raporlar", testId: "nav-raporlar" },

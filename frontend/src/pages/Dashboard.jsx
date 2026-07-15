@@ -148,7 +148,7 @@ export default function Dashboard() {
         <KpiCard label="Ödenen Komisyon" value={k.total_commission} tone="yellow" icon={Percent} testId="kpi-commission" />
         <KpiCard label="Net İşlem (Y-Ç-K)" value={k.net_transactions} tone={k.net_transactions >= 0 ? "green" : "red"} icon={Sparkles} testId="kpi-net" />
         <KpiCard label="Giderler" value={k.total_expense} tone="red" icon={Receipt} testId="kpi-expense" />
-        <KpiCard label="Krediler +/-" value={k.credits_added - k.credits_paid} tone="cyan" icon={Coins} testId="kpi-credits" hint={`Eklenen ${fmtTRY(k.credits_added)} · Ödenen ${fmtTRY(k.credits_paid)}`} />
+        <KpiCard label="Manueller +/-" value={k.credits_added - k.credits_paid} tone="cyan" icon={Coins} testId="kpi-credits" hint={`Eklenen ${fmtTRY(k.credits_added)} · Ödenen ${fmtTRY(k.credits_paid)}`} />
         <KpiCard label="Kar / Zarar" value={k.profit_loss} tone={k.profit_loss >= 0 ? "green" : "red"} icon={Landmark} testId="kpi-pnl" />
         <KpiCard label="Toplam Kasa" value={k.total_cash} tone="white" icon={Wallet} testId="kpi-cash-total" />
       </div>

@@ -121,7 +121,7 @@ export default function Settings() {
         name: newDebtor.name.trim(),
         initial_balance: Number(newDebtor.initial_balance) || 0,
       });
-      toast.success("Kredici eklendi");
+      toast.success("Manuel sağlayıcı eklendi");
       setNewDebtor({ name: "", initial_balance: 0 });
       load();
     } catch (e) { toast.error("Hata"); }
@@ -304,14 +304,14 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Editable Krediciler */}
+      {/* Editable Manuel Sağlayıcılar */}
       <div>
-        <h3 className="font-display text-lg text-white mb-4">Krediciler</h3>
+        <h3 className="font-display text-lg text-white mb-4">Manuel Sağlayıcılar</h3>
         <div className="border border-border rounded-sm bg-card overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Kredici İsmi</TableHead>
+                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Manuel Sağlayıcı İsmi</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-right">Açılış Bakiyesi</TableHead>
                 <TableHead className="w-32"></TableHead>
               </TableRow>

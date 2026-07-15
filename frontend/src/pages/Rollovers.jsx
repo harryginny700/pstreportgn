@@ -140,12 +140,12 @@ function RolloverDetail({ data }) {
 
       {data.debtor_snapshots.length > 0 && (
         <div>
-          <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-2 flex items-center gap-2"><Coins className="w-3.5 h-3.5" /> Kredici Bakiyeleri</div>
+          <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-2 flex items-center gap-2"><Coins className="w-3.5 h-3.5" /> Manuel Sağlayıcı Bakiyeleri</div>
           <div className="border border-border rounded-sm overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Kredici</TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Manuel Sağlayıcı</TableHead>
                   <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground text-right">Ay Sonu Bakiye</TableHead>
                 </TableRow>
               </TableHeader>
