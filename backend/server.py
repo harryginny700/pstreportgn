@@ -127,6 +127,8 @@ class Site(BaseModel):
     name: str
     slug: Optional[str] = None
     active: bool = True
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -258,6 +260,13 @@ class SiteInput(BaseModel):
     name: str
     slug: Optional[str] = None
     active: bool = True
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+
+
+class TelegramConfigInput(BaseModel):
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
 
 
 class TransactionInput(BaseModel):
@@ -1345,6 +1354,146 @@ async def seed_defaults(sid: str, user: dict = Depends(require_admin)):
         raise HTTPException(400, "Bu sitede zaten veri var")
     await _seed_default_site_data(sid)
     await log_audit(user, "site.seed_defaults", "site", sid, target_name=site.get("name"), site_id=sid)
+    return {"ok": True}
+
+
+# ============== TELEGRAM ==============
+
+@api_router.get("/site/telegram-config")
+async def get_telegram_config(user: dict = Depends(get_current_user)):
+    """Site user or admin (with adminSiteId override) fetches current telegram config."""
+    if user.get("platform_role") == "admin":
+        raise HTTPException(400, "Admin bu endpoint'i kullanamaz. Admin Panel'den site düzenleyin.")
+    site = await db.sites.find_one({"id": user["site_id"]}, {"_id": 0})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+    return {
+        "telegram_bot_token": site.get("telegram_bot_token") or "",
+        "telegram_chat_id": site.get("telegram_chat_id") or "",
+        "configured": bool(site.get("telegram_bot_token") and site.get("telegram_chat_id")),
+    }
+
+
+@api_router.put("/site/telegram-config")
+async def update_telegram_config(inp: TelegramConfigInput, user: dict = Depends(get_current_user)):
+    if user.get("platform_role") == "admin":
+        raise HTTPException(400, "Admin bu endpoint'i kullanamaz. Admin Panel'den site düzenleyin.")
+    sid = user["site_id"]
+    update = {
+        "telegram_bot_token": (inp.telegram_bot_token or "").strip() or None,
+        "telegram_chat_id": (inp.telegram_chat_id or "").strip() or None,
+    }
+    await db.sites.update_one({"id": sid}, {"$set": update})
+    await log_audit(user, "site.telegram_config", "site", sid, site_id=sid,
+                    details={"configured": bool(update["telegram_bot_token"] and update["telegram_chat_id"])})
+    return {"ok": True}
+
+
+def _fmt_try(n: float) -> str:
+    """Turkish TRY formatting."""
+    try:
+        s = f"{float(n):,.2f}"
+        # 1,234.56 → 1.234,56
+        return s.replace(",", "X").replace(".", ",").replace("X", ".") + " ₺"
+    except Exception:
+        return f"{n} ₺"
+
+
+def _fmt_daily_message(site_name: str, date_str: str, data: dict) -> str:
+    s = data["summary"]
+    pm_rows = data.get("payment_method_rows", [])
+    total_dep = sum(r["deposit"] for r in pm_rows)
+    total_wd = sum(r["withdrawal"] for r in pm_rows)
+    total_com = sum(r["commission"] for r in pm_rows)
+    total_net = sum(r["net"] for r in pm_rows)
+    member_delta = total_dep - total_wd
+    manuel_delta = (s.get("credit_added") or 0) - (s.get("credit_paid") or 0)
+    expense = s.get("expense") or 0
+    pnl = s.get("profit_loss", 0)
+
+    lines = []
+    lines.append(f"📊 *{site_name}* — Günlük Rapor")
+    lines.append(f"🗓️ {date_str}")
+    lines.append("")
+    lines.append("*━━━ SİTE ÜYELERİ ━━━*")
+    lines.append(f"📈 Yatırım: `{_fmt_try(total_dep)}`")
+    lines.append(f"📉 Çekim: `{_fmt_try(total_wd)}`")
+    lines.append(f"💸 Ödenen Komisyon: `{_fmt_try(total_com)}`")
+    lines.append(f"🏦 Günlük Kalan: `{_fmt_try(total_net)}`")
+    lines.append(f"⚖️ Y-Ç Farkı: `{_fmt_try(member_delta)}`")
+    lines.append("")
+    lines.append("*━━━ MANUELLER ━━━*")
+    lines.append(f"➕ Eklenen: `{_fmt_try(s.get('credit_added') or 0)}`")
+    lines.append(f"➖ Ödenen: `{_fmt_try(s.get('credit_paid') or 0)}`")
+    lines.append(f"⚖️ Fark: `{_fmt_try(manuel_delta)}`")
+    lines.append("")
+    lines.append("*━━━ SİTE TOPLAMLARI ━━━*")
+    lines.append(f"📈 Toplam Yatırım: `{_fmt_try(total_dep)}`")
+    lines.append(f"📉 Toplam Çekim: `{_fmt_try(total_wd)}`")
+    lines.append(f"🧾 Yapılan Ödemeler: `{_fmt_try(expense)}`")
+
+    transfers = data.get("transfers", [])
+    if transfers:
+        lines.append("")
+        lines.append("*━━━ KASALAR ARASI TRANSFER ━━━*")
+        for t in transfers:
+            lines.append(f"🔄 {t.get('from_name', '?')} → {t.get('to_name', '?')}: `{_fmt_try(t['amount'])}`")
+
+    expenses = data.get("expenses", [])
+    if expenses:
+        lines.append("")
+        lines.append("*━━━ YAPILAN ÖDEMELER ━━━*")
+        for e in expenses:
+            desc = (e.get("description") or "").replace("*", "").replace("_", "")[:40]
+            kasa = e.get("cash_register_name", "-")
+            lines.append(f"• {desc} ({kasa}): `{_fmt_try(e['amount'])}`")
+
+    lines.append("")
+    icon = "✅" if pnl >= 0 else "❌"
+    lines.append(f"*━━━ SONUÇ ━━━*")
+    lines.append(f"{icon} *KAR / ZARAR:* `{_fmt_try(pnl)}`")
+    return "\n".join(lines)
+
+
+@api_router.post("/reports/daily/send-telegram")
+async def send_daily_telegram(date_str: str = Query(..., alias="date"),
+                              user: dict = Depends(get_current_user)):
+    """Fetch daily report and send stat blocks (right column) to configured Telegram group."""
+    if user.get("platform_role") == "admin":
+        raise HTTPException(400, "Bu endpoint sadece site kullanıcıları içindir. Admin'in bir site'ı yok.")
+    site = await db.sites.find_one({"id": user["site_id"]}, {"_id": 0})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+    token = site.get("telegram_bot_token")
+    chat_id = site.get("telegram_chat_id")
+    if not token or not chat_id:
+        raise HTTPException(400, "Bu site için Telegram bot token'ı ve grup ID'si tanımlı değil. Ayarlar → Telegram bölümünden ekleyin.")
+
+    data = await report_daily(date_str, None, user)
+    msg = _fmt_daily_message(site["name"], date_str, data)
+
+    # Send via Telegram HTTP API
+    import httpx
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json={
+                "chat_id": chat_id,
+                "text": msg,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            })
+        if resp.status_code != 200:
+            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"text": resp.text}
+            desc = body.get("description", "Telegram API hatası")
+            raise HTTPException(502, f"Telegram: {desc}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Telegram bağlantı hatası: {e}")
+
+    await log_audit(user, "telegram.send_daily", "site", user["site_id"],
+                    site_id=user["site_id"], details={"date": date_str})
     return {"ok": True}
 
 

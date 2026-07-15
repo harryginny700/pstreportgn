@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Download, FileText, ArrowRight, TrendingUp, TrendingDown, Percent, Wallet, Receipt, Landmark, Coins, ArrowLeftRight, Scale, PlusCircle, MinusCircle, Users, CreditCard, PiggyBank, Sparkles, Archive, Loader2 } from "lucide-react";
+import { Download, FileText, ArrowRight, TrendingUp, TrendingDown, Percent, Wallet, Receipt, Landmark, Coins, ArrowLeftRight, Scale, PlusCircle, MinusCircle, Users, CreditCard, PiggyBank, Sparkles, Archive, Loader2, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
@@ -93,13 +93,16 @@ export default function Reports() {
         {/* ============== DAILY ============== */}
         <TabsContent value="daily" className="mt-6 space-y-6">
           <div className="flex items-end justify-between flex-wrap gap-4">
-            <div>
-              <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Tarih</label>
-              <Input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} className="w-52 bg-transparent border-border rounded-sm font-data h-9" data-testid="reports-daily-date" />
+            <div className="flex items-end gap-3 flex-wrap">
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Tarih</label>
+                <Input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} className="w-52 bg-transparent border-border rounded-sm font-data h-9" data-testid="reports-daily-date" />
+              </div>
+              <TelegramSendButton date={dailyDate} />
             </div>
             <div className="text-right">
               <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Rapor Tarihi</div>
-              <div className="font-display text-2xl text-white mt-0.5" data-testid="daily-header-date">{fmtDateShort(dailyDate)}</div>
+              <div className="font-display text-2xl text-foreground mt-0.5" data-testid="daily-header-date">{fmtDateShort(dailyDate)}</div>
             </div>
           </div>
 
@@ -416,3 +419,31 @@ function StatRow({ label, value, tone, bold = false, highlight = false, icon: Ic
     </div>
   );
 }
+
+function TelegramSendButton({ date }) {
+  const [sending, setSending] = useState(false);
+  const send = async () => {
+    if (!confirm(`${date} tarihli günlük rapor Telegram grubuna gönderilecek. Emin misiniz?`)) return;
+    setSending(true);
+    try {
+      await api.post(`/reports/daily/send-telegram?date=${date}`);
+      toast.success("Telegram grubuna gönderildi");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gönderim hatası");
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <Button
+      onClick={send}
+      disabled={sending}
+      className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95 disabled:opacity-60"
+      data-testid="telegram-send"
+    >
+      {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+      Telegram'a Gönder
+    </Button>
+  );
+}
+

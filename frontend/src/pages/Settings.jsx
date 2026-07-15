@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { AlertTriangle, RefreshCw, Save, Plus, Trash2, ChevronUp, ChevronDown } from "lucide-react";
+import { AlertTriangle, RefreshCw, Save, Plus, Trash2, ChevronUp, ChevronDown, Send } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 
 export default function Settings() {
   const [methods, setMethods] = useState([]);
@@ -336,6 +337,9 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Telegram integration (site users only) */}
+      <TelegramSection />
+
       {/* Danger zone */}
       <div className="border border-[hsl(345_100%_60%)]/40 rounded-sm bg-[hsl(345_100%_60%)]/[0.03] p-5">
         <div className="flex items-start gap-3">
@@ -477,6 +481,117 @@ function DebtorRow({ debtor, onSaved, onDelete }) {
         </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+
+function TelegramSection() {
+  const { isAdmin } = useAuth();
+  const [token, setToken] = useState("");
+  const [chatId, setChatId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [configured, setConfigured] = useState(false);
+
+  useEffect(() => {
+    if (isAdmin) { setLoading(false); return; }
+    api.get("/site/telegram-config")
+      .then((r) => {
+        setToken(r.data.telegram_bot_token || "");
+        setChatId(r.data.telegram_chat_id || "");
+        setConfigured(r.data.configured);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [isAdmin]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put("/site/telegram-config", {
+        telegram_bot_token: token.trim() || null,
+        telegram_chat_id: chatId.trim() || null,
+      });
+      toast.success("Telegram ayarları kaydedildi");
+      setConfigured(!!(token.trim() && chatId.trim()));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Kayıt hatası");
+    } finally { setSaving(false); }
+  };
+
+  if (isAdmin) {
+    return (
+      <div className="border border-border rounded-sm bg-card p-4 md:p-5" data-testid="telegram-admin-note">
+        <div className="flex items-center gap-3 mb-2">
+          <Send className="w-4 h-4 text-primary" />
+          <h3 className="font-display text-lg text-foreground">Telegram Entegrasyonu</h3>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Admin olarak sitelerin Telegram konfigürasyonunu yönetmiyorsunuz. Site kullanıcıları
+          giriş yaptıklarında kendi ayarlarını buradan yönetir. Test için bir site kullanıcısıyla giriş yapın.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-border rounded-sm bg-card p-4 md:p-5" data-testid="telegram-section">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <Send className="w-4 h-4 text-primary" />
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Entegrasyon</div>
+            <h3 className="font-display text-lg text-foreground mt-0.5">Telegram Bot</h3>
+          </div>
+        </div>
+        {configured && (
+          <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-sm border text-[hsl(144_100%_55%)] border-[hsl(144_100%_50%)]/30 bg-[hsl(144_100%_50%)]/10">Aktif</span>
+        )}
+      </div>
+      {loading ? (
+        <div className="text-xs text-muted-foreground font-data">Yükleniyor...</div>
+      ) : (
+        <>
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Bot Token</label>
+              <Input
+                type="text"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="123456789:AAH..."
+                className="bg-transparent border-border rounded-sm h-9 font-data text-xs"
+                data-testid="telegram-token"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Grup / Chat ID</label>
+              <Input
+                type="text"
+                value={chatId}
+                onChange={(e) => setChatId(e.target.value)}
+                placeholder="-1001234567890"
+                className="bg-transparent border-border rounded-sm h-9 font-data text-xs"
+                data-testid="telegram-chat-id"
+              />
+            </div>
+          </div>
+          <div className="mt-3 text-[11px] text-muted-foreground leading-relaxed">
+            <p>• BotFather'dan yeni bir bot oluşturup token'ı alın.</p>
+            <p>• Botu gruba ekleyip <span className="font-data">/start</span> gönderin.</p>
+            <p>• Grup ID'sini almak için <span className="font-data">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span> URL'ini açıp <span className="font-data">chat.id</span> değerini kopyalayın (negatif sayı).</p>
+          </div>
+          <Button
+            onClick={save}
+            disabled={saving}
+            className="mt-4 rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95 disabled:opacity-50"
+            data-testid="telegram-save"
+          >
+            <Save className="w-4 h-4" /> {saving ? "Kaydediliyor..." : "Kaydet"}
+          </Button>
+        </>
+      )}
+    </div>
   );
 }
 
