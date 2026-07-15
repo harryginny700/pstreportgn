@@ -235,6 +235,13 @@ async def update_payment_method(pid: str, inp: PaymentMethodInput):
     return doc
 
 
+@api_router.post("/payment-methods/reorder")
+async def reorder_payment_methods(ids: List[str]):
+    for i, pid in enumerate(ids):
+        await db.payment_methods.update_one({"id": pid}, {"$set": {"order": i}})
+    return {"ok": True, "count": len(ids)}
+
+
 @api_router.delete("/payment-methods/{pid}")
 async def delete_payment_method(pid: str):
     await db.payment_methods.delete_one({"id": pid})

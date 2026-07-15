@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { AlertTriangle, RefreshCw, Save, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, RefreshCw, Save, Plus, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 
 export default function Settings() {
   const [methods, setMethods] = useState([]);
@@ -59,6 +59,20 @@ export default function Settings() {
       toast.success("Silindi");
       load();
     } catch (e) { toast.error("Hata"); }
+  };
+
+  const movePm = async (index, direction) => {
+    const target = index + direction;
+    if (target < 0 || target >= methods.length) return;
+    const next = [...methods];
+    [next[index], next[target]] = [next[target], next[index]];
+    setMethods(next); // optimistic
+    try {
+      await api.post("/payment-methods/reorder", next.map((m) => m.id));
+    } catch (e) {
+      toast.error("Sıralama hatası");
+      load();
+    }
   };
 
   const addPm = async () => {
@@ -140,6 +154,7 @@ export default function Settings() {
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 w-16">Sıra</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Yöntem İsmi</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Bağlı Kasa</TableHead>
                 <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 text-center">Yatırım Kom. %</TableHead>
@@ -148,8 +163,32 @@ export default function Settings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {methods.map((m) => (
+              {methods.map((m, idx) => (
                 <TableRow key={m.id} className="border-border hover:bg-white/[0.02]" data-testid={`pm-row-${m.id}`}>
+                  <TableCell>
+                    <div className="flex flex-col gap-0.5">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => movePm(idx, -1)}
+                        disabled={idx === 0}
+                        className="h-5 w-8 rounded-sm text-neutral-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        data-testid={`pm-up-${m.id}`}
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => movePm(idx, 1)}
+                        disabled={idx === methods.length - 1}
+                        className="h-5 w-8 rounded-sm text-neutral-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        data-testid={`pm-down-${m.id}`}
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <Input
                       defaultValue={m.name}
@@ -203,6 +242,7 @@ export default function Settings() {
               ))}
               {/* Add new payment method row */}
               <TableRow className="border-border bg-secondary/30 hover:bg-secondary/40" data-testid="pm-add-row">
+                <TableCell></TableCell>
                 <TableCell>
                   <Input
                     placeholder="Yeni yöntem ismi..."
