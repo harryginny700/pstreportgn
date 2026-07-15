@@ -311,6 +311,7 @@ async def login(inp: LoginInput):
     site = None
     if user.get("site_id"):
         site = await db.sites.find_one({"id": user["site_id"]}, {"_id": 0})
+    await log_audit(user, "auth.login", "user", user["id"], target_name=user["email"], site_id=user.get("site_id"))
     return {"token": token, "user": user, "site": site}
 
 
@@ -320,6 +321,76 @@ async def me(user: dict = Depends(get_current_user)):
     if user.get("site_id"):
         site = await db.sites.find_one({"id": user["site_id"]}, {"_id": 0})
     return {"user": user, "site": site}
+
+
+class ChangePasswordInput(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@api_router.post("/auth/change-password")
+async def change_password(inp: ChangePasswordInput, user: dict = Depends(get_current_user)):
+    if len(inp.new_password) < 6:
+        raise HTTPException(400, "Yeni şifre en az 6 karakter olmalı")
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not verify_password(inp.current_password, full["password_hash"]):
+        raise HTTPException(400, "Mevcut şifre hatalı")
+    await db.users.update_one({"id": user["id"]},
+                              {"$set": {"password_hash": hash_password(inp.new_password)}})
+    await log_audit(user, "password_change", "user", user["id"], {"self": True})
+    return {"ok": True}
+
+
+# ============== AUDIT LOG ==============
+
+class AuditLog(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=uid)
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    user_id: str
+    user_email: str
+    action: str  # e.g., "site.create", "user.delete"
+    target_type: str  # site, user, payment_method, etc.
+    target_id: Optional[str] = None
+    target_name: Optional[str] = None
+    details: Optional[dict] = None
+    site_id: Optional[str] = None
+
+
+async def log_audit(user: dict, action: str, target_type: str,
+                    target_id: Optional[str] = None, details: Optional[dict] = None,
+                    target_name: Optional[str] = None, site_id: Optional[str] = None):
+    entry = AuditLog(
+        user_id=user["id"], user_email=user["email"],
+        action=action, target_type=target_type,
+        target_id=target_id, target_name=target_name,
+        details=details, site_id=site_id,
+    )
+    try:
+        await db.audit_logs.insert_one(entry.model_dump())
+    except Exception:
+        pass
+
+
+@api_router.get("/admin/audit-logs")
+async def list_audit_logs(
+    limit: int = 100,
+    offset: int = 0,
+    action: Optional[str] = None,
+    user_id: Optional[str] = None,
+    target_type: Optional[str] = None,
+    user: dict = Depends(require_admin),
+):
+    q = {}
+    if action:
+        q["action"] = action
+    if user_id:
+        q["user_id"] = user_id
+    if target_type:
+        q["target_type"] = target_type
+    total = await db.audit_logs.count_documents(q)
+    docs = await db.audit_logs.find(q, {"_id": 0}).sort("timestamp", -1).skip(offset).limit(limit).to_list(limit)
+    return {"total": total, "items": docs}
 
 
 # ============== ADMIN: SITES ==============
@@ -337,6 +408,7 @@ async def list_sites(user: dict = Depends(require_admin)):
 async def create_site(inp: SiteInput, user: dict = Depends(require_admin)):
     obj = Site(**inp.model_dump())
     await db.sites.insert_one(obj.model_dump())
+    await log_audit(user, "site.create", "site", obj.id, target_name=obj.name, details=inp.model_dump(), site_id=obj.id)
     return obj
 
 
@@ -345,16 +417,23 @@ async def update_site(sid: str, inp: SiteInput, user: dict = Depends(require_adm
     result = await db.sites.update_one({"id": sid}, {"$set": inp.model_dump()})
     if result.matched_count == 0:
         raise HTTPException(404, "Site bulunamadı")
+    await log_audit(user, "site.update", "site", sid, target_name=inp.name, details=inp.model_dump(), site_id=sid)
     return await db.sites.find_one({"id": sid}, {"_id": 0})
 
 
 @api_router.delete("/admin/sites/{sid}")
 async def delete_site(sid: str, user: dict = Depends(require_admin)):
+    site = await db.sites.find_one({"id": sid}, {"_id": 0})
+    site_name = site["name"] if site else None
     # Cascade delete all site data
+    counts = {}
     for coll in ["cash_registers", "payment_methods", "debtors", "transactions", "credits", "expenses", "transfers"]:
-        await db[coll].delete_many({"site_id": sid})
-    await db.users.delete_many({"site_id": sid})
+        r = await db[coll].delete_many({"site_id": sid})
+        counts[coll] = r.deleted_count
+    users_deleted = (await db.users.delete_many({"site_id": sid})).deleted_count
     await db.sites.delete_one({"id": sid})
+    await log_audit(user, "site.delete", "site", sid, target_name=site_name,
+                    details={"cascade": {**counts, "users": users_deleted}}, site_id=sid)
     return {"ok": True}
 
 
@@ -396,22 +475,35 @@ async def create_user(inp: UserCreateInput, user: dict = Depends(require_admin))
     await db.users.insert_one(d)
     d.pop("password_hash", None)
     d.pop("_id", None)
+    await log_audit(user, "user.create", "user", obj.id, target_name=obj.email,
+                    details={"platform_role": obj.platform_role, "site_role": obj.site_role},
+                    site_id=obj.site_id)
     return d
 
 
 @api_router.put("/admin/users/{uid_}")
 async def update_user(uid_: str, inp: UserUpdateInput, user: dict = Depends(require_admin)):
+    target = await db.users.find_one({"id": uid_}, {"_id": 0, "password_hash": 0})
+    if not target:
+        raise HTTPException(404, "Kullanıcı bulunamadı")
     update = {}
-    if inp.name is not None:
+    changes = []
+    if inp.name is not None and inp.name != target.get("name"):
         update["name"] = inp.name
+        changes.append("name")
     if inp.password:
         update["password_hash"] = hash_password(inp.password)
-    if inp.active is not None:
+        changes.append("password")
+    if inp.active is not None and inp.active != target.get("active"):
         update["active"] = inp.active
-    if inp.site_role is not None:
+        changes.append(f"active={inp.active}")
+    if inp.site_role is not None and inp.site_role != target.get("site_role"):
         update["site_role"] = inp.site_role
+        changes.append(f"site_role={inp.site_role}")
     if update:
         await db.users.update_one({"id": uid_}, {"$set": update})
+        await log_audit(user, "user.update", "user", uid_, target_name=target["email"],
+                        details={"changes": changes}, site_id=target.get("site_id"))
     return await db.users.find_one({"id": uid_}, {"_id": 0, "password_hash": 0})
 
 
@@ -419,7 +511,11 @@ async def update_user(uid_: str, inp: UserUpdateInput, user: dict = Depends(requ
 async def delete_user(uid_: str, user: dict = Depends(require_admin)):
     if uid_ == user["id"]:
         raise HTTPException(400, "Kendinizi silemezsiniz")
+    target = await db.users.find_one({"id": uid_}, {"_id": 0})
     await db.users.delete_one({"id": uid_})
+    if target:
+        await log_audit(user, "user.delete", "user", uid_, target_name=target.get("email"),
+                        site_id=target.get("site_id"))
     return {"ok": True}
 
 
@@ -1162,6 +1258,7 @@ async def seed_defaults(sid: str, user: dict = Depends(require_admin)):
     if existing > 0:
         raise HTTPException(400, "Bu sitede zaten veri var")
     await _seed_default_site_data(sid)
+    await log_audit(user, "site.seed_defaults", "site", sid, target_name=site.get("name"), site_id=sid)
     return {"ok": True}
 
 
@@ -1243,6 +1340,8 @@ async def _startup():
     await db.debtors.create_index("site_id")
     await db.users.create_index("email", unique=True)
     await db.sites.create_index("name")
+    await db.audit_logs.create_index([("timestamp", -1)])
+    await db.audit_logs.create_index("user_id")
     try:
         await seed_admin_and_migrate()
     except Exception as e:

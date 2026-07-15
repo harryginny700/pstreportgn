@@ -353,8 +353,7 @@ export default function Settings() {
   );
 }
 
-function KasaRow({ kasa, onSaved, onDelete }) {
-  const [name, setName] = useState(kasa.name);
+function KasaRow({ kasa, onSaved, onDelete }) {  const [name, setName] = useState(kasa.name);
   const [initial, setInitial] = useState(kasa.initial_balance || 0);
   const [saving, setSaving] = useState(false);
   const changed = name !== kasa.name || Number(initial) !== Number(kasa.initial_balance || 0);
@@ -480,3 +479,4 @@ function DebtorRow({ debtor, onSaved, onDelete }) {
     </TableRow>
   );
 }
+

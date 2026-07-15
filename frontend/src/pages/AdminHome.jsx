@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Plus, Trash2, Users, Globe, TrendingUp, TrendingDown, Percent, Landmark, ChevronRight, ExternalLink } from "lucide-react";
+import { Plus, Trash2, Users, Globe, TrendingUp, TrendingDown, Percent, Landmark, ChevronRight, ExternalLink, History, ChevronLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 export default function AdminHome() {
@@ -131,6 +131,7 @@ export default function AdminHome() {
           { k: "overview", label: "Genel Bakış" },
           { k: "sites", label: "Siteler" },
           { k: "users", label: "Kullanıcılar" },
+          { k: "audit", label: "Denetim Kaydı" },
         ].map((t) => (
           <button
             key={t.k}
@@ -391,6 +392,9 @@ export default function AdminHome() {
           </div>
         </div>
       )}
+
+      {tab === "audit" && <AuditLogTab />}
+
     </div>
   );
 }
@@ -414,3 +418,151 @@ function StatCard({ label, value, tone, icon: Icon, currency = true }) {
     </div>
   );
 }
+
+const ACTION_LABELS = {
+  "auth.login": { label: "Giriş", color: "text-neutral-400" },
+  "site.create": { label: "Site Oluşturuldu", color: "text-[hsl(144_100%_55%)]" },
+  "site.update": { label: "Site Güncellendi", color: "text-[hsl(53_98%_60%)]" },
+  "site.delete": { label: "Site Silindi", color: "text-[hsl(345_100%_65%)]" },
+  "site.seed_defaults": { label: "Varsayılan Yüklendi", color: "text-[hsl(186_100%_55%)]" },
+  "user.create": { label: "Kullanıcı Oluşturuldu", color: "text-[hsl(144_100%_55%)]" },
+  "user.update": { label: "Kullanıcı Güncellendi", color: "text-[hsl(53_98%_60%)]" },
+  "user.delete": { label: "Kullanıcı Silindi", color: "text-[hsl(345_100%_65%)]" },
+  "password_change": { label: "Şifre Değiştirildi", color: "text-[hsl(186_100%_55%)]" },
+};
+
+function AuditLogTab() {
+  const [data, setData] = useState({ total: 0, items: [] });
+  const [offset, setOffset] = useState(0);
+  const [filter, setFilter] = useState("all");
+  const [loading, setLoading] = useState(false);
+  const PAGE_SIZE = 25;
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = { limit: PAGE_SIZE, offset };
+      if (filter !== "all") params.action = filter;
+      const r = await api.get("/admin/audit-logs", { params });
+      setData(r.data);
+    } catch (e) {
+      toast.error("Yüklenemedi");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [offset, filter]);
+
+  const fmtTs = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return d.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  };
+
+  const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+  const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+
+  return (
+    <div className="space-y-4" data-testid="audit-tab">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <History className="w-4 h-4 text-primary" />
+          <div className="text-xs text-neutral-400 font-data">{data.total} kayıt</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={filter} onValueChange={(v) => { setFilter(v); setOffset(0); }}>
+            <SelectTrigger className="w-52 bg-transparent border-border rounded-sm h-9 text-xs" data-testid="audit-filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tüm İşlemler</SelectItem>
+              <SelectItem value="auth.login">Girişler</SelectItem>
+              <SelectItem value="site.create">Site Oluşturma</SelectItem>
+              <SelectItem value="site.update">Site Güncelleme</SelectItem>
+              <SelectItem value="site.delete">Site Silme</SelectItem>
+              <SelectItem value="site.seed_defaults">Varsayılan Yükleme</SelectItem>
+              <SelectItem value="user.create">Kullanıcı Oluşturma</SelectItem>
+              <SelectItem value="user.update">Kullanıcı Güncelleme</SelectItem>
+              <SelectItem value="user.delete">Kullanıcı Silme</SelectItem>
+              <SelectItem value="password_change">Şifre Değişiklikleri</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="border border-border rounded-sm bg-card overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow className="border-border hover:bg-transparent">
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 w-44">Zaman</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Kullanıcı</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">İşlem</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Hedef</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Detay</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.items.length === 0 && (
+              <TableRow className="border-border"><TableCell colSpan={5} className="text-center text-xs text-neutral-500 font-data py-8">
+                {loading ? "Yükleniyor..." : "Kayıt yok"}
+              </TableCell></TableRow>
+            )}
+            {data.items.map((l) => {
+              const meta = ACTION_LABELS[l.action] || { label: l.action, color: "text-neutral-400" };
+              return (
+                <TableRow key={l.id} className="border-border hover:bg-white/[0.02]" data-testid={`audit-row-${l.id}`}>
+                  <TableCell className="font-data text-[11px] text-neutral-400">{fmtTs(l.timestamp)}</TableCell>
+                  <TableCell className="text-sm text-white">{l.user_email}</TableCell>
+                  <TableCell><span className={`text-xs uppercase tracking-wider font-medium ${meta.color}`}>{meta.label}</span></TableCell>
+                  <TableCell className="text-sm text-neutral-300">
+                    {l.target_name ? (
+                      <span>
+                        <span className="text-[10px] text-neutral-500 uppercase mr-1.5">{l.target_type}</span>
+                        {l.target_name}
+                      </span>
+                    ) : "-"}
+                  </TableCell>
+                  <TableCell className="font-data text-[11px] text-neutral-500 max-w-md truncate">
+                    {l.details ? Object.entries(l.details).map(([k, v]) =>
+                      typeof v === "object" ? `${k}=${JSON.stringify(v)}` : `${k}=${v}`
+                    ).join(" · ") : "-"}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+
+      {pages > 1 && (
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-neutral-500 font-data">Sayfa {currentPage} / {pages}</div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+              className="rounded-sm border-border h-8 gap-1 text-xs active:scale-95 disabled:opacity-40"
+              data-testid="audit-prev"
+            >
+              <ChevronLeft className="w-3 h-3" /> Önceki
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={offset + PAGE_SIZE >= data.total}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+              className="rounded-sm border-border h-8 gap-1 text-xs active:scale-95 disabled:opacity-40"
+              data-testid="audit-next"
+            >
+              Sonraki <ChevronRight className="w-3 h-3" />
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+

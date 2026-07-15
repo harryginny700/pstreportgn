@@ -14,12 +14,12 @@ import {
   LogOut,
   Globe,
   ArrowLeft,
+  User,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-
 const siteNav = [
   { to: "/", icon: LayoutDashboard, label: "Panel", testId: "nav-dashboard", end: true },
   { to: "/gunluk", icon: CalendarClock, label: "Günlük Giriş", testId: "nav-daily" },
@@ -149,7 +149,14 @@ export default function Layout() {
               </div>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => { logout(); navigate("/login"); }} className="w-full justify-start gap-2 h-8 text-xs text-neutral-400 hover:text-white" data-testid="logout-btn">
+          <NavLink to="/profil" data-testid="nav-profil" className={({ isActive }) =>
+            `flex items-center gap-2 px-2 h-8 rounded-sm text-xs transition-colors ${
+              isActive ? "text-white bg-secondary/80" : "text-neutral-400 hover:text-white hover:bg-secondary/60"
+            }`
+          }>
+            <User className="w-3.5 h-3.5" /> Profil & Şifre
+          </NavLink>
+          <Button variant="ghost" size="sm" onClick={() => { logout(); navigate("/login"); }} className="w-full justify-start gap-2 h-8 text-xs text-neutral-400 hover:text-white mt-1" data-testid="logout-btn">
             <LogOut className="w-3.5 h-3.5" /> Çıkış Yap
           </Button>
         </div>
@@ -172,7 +179,7 @@ export default function Layout() {
           </div>
         </header>
         <main className="px-8 py-8">
-          {!inAdmin && isAdmin && !adminSiteId ? (
+          {!inAdmin && isAdmin && !adminSiteId && location.pathname !== "/profil" ? (
             <div className="border border-border rounded-sm bg-card p-8 text-center">
               <Globe className="w-8 h-8 text-neutral-500 mx-auto mb-3" />
               <h3 className="font-display text-lg text-white mb-2">Bir site seçin</h3>
