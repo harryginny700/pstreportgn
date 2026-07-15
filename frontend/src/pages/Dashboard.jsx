@@ -13,6 +13,7 @@ import {
   Sparkles,
   Landmark,
   Coins,
+  HandCoins,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -99,6 +100,7 @@ export default function Dashboard() {
     .map((p) => ({ name: p.name, value: p.deposit }));
 
   const kasaBars = (data.balances || []).map((b) => ({ name: b.name.replace(" KASA", ""), Bakiye: b.balance }));
+  const sc = data.site_credit || { unpaid_debt: 0, unpaid_count: 0, paid_count: 0, total_count: 0, recent: [] };
 
   return (
     <div className="space-y-8" data-testid="dashboard-page">
@@ -140,6 +142,52 @@ export default function Dashboard() {
           </Button>
         </div>
       </div>
+
+      {/* Playspintech kredi borç durumu */}
+      {sc.total_count > 0 && (
+        <div
+          className={`border rounded-sm p-4 md:p-5 ${sc.unpaid_debt > 0 ? "border-[hsl(45_100%_55%)] bg-[hsl(45_100%_55%_/_0.06)]" : "border-[hsl(144_100%_45%)] bg-[hsl(144_100%_45%_/_0.05)]"}`}
+          data-testid="dashboard-site-credit-banner"
+        >
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-start gap-3">
+              <div className={`w-9 h-9 rounded-sm flex items-center justify-center ${sc.unpaid_debt > 0 ? "bg-[hsl(45_100%_55%)] text-black" : "bg-[hsl(144_100%_45%)] text-black"}`}>
+                <HandCoins className="w-4 h-4" strokeWidth={2.5} />
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Playspintech Kredi Borcu</div>
+                {sc.unpaid_debt > 0 ? (
+                  <>
+                    <div className="font-data text-2xl md:text-3xl text-[hsl(45_100%_55%)] mt-0.5" data-testid="dashboard-debt-amount">{fmtTRY(sc.unpaid_debt)}</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {sc.unpaid_count} bekleyen ödeme
+                      {sc.paid_count > 0 && ` · ${sc.paid_count} ödenmiş`}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-data text-lg text-[hsl(144_100%_55%)] mt-0.5" data-testid="dashboard-debt-clear">Tüm borçlar ödendi</div>
+                    <div className="text-xs text-muted-foreground mt-1">{sc.paid_count} kayıt · Bekleyen borç yok</div>
+                  </>
+                )}
+              </div>
+            </div>
+            {sc.recent && sc.recent.length > 0 && (
+              <div className="space-y-1 text-xs font-data max-w-md">
+                <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-1">Son kayıtlar</div>
+                {sc.recent.slice(0, 3).map(c => (
+                  <div key={c.id} className="flex items-center justify-between gap-3 text-muted-foreground">
+                    <span>{c.date} · {fmtTRY(c.amount)} @ %{c.commission_pct}</span>
+                    <span className={c.status === "paid" ? "text-[hsl(144_100%_55%)]" : "text-[hsl(45_100%_55%)]"}>
+                      {c.status === "paid" ? "Ödendi" : fmtTRY(c.debt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

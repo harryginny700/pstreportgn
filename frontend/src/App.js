@@ -15,6 +15,7 @@ import Transfers from "@/pages/Transfers";
 import Reports from "@/pages/Reports";
 import Settings from "@/pages/Settings";
 import AdminHome from "@/pages/AdminHome";
+import AdminCredits from "@/pages/AdminCredits";
 import Profile from "@/pages/Profile";
 import Rollovers from "@/pages/Rollovers";
 import { Loader2 } from "lucide-react";
@@ -50,6 +51,7 @@ function AppRoutes() {
         <Route path="/ayarlar" element={<Settings />} />
         <Route path="/profil" element={<Profile />} />
         <Route path="/admin" element={<ProtectedRoute adminOnly><AdminHome /></ProtectedRoute>} />
+        <Route path="/admin/krediler" element={<ProtectedRoute adminOnly><AdminCredits /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

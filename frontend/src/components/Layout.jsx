@@ -20,6 +20,7 @@ import {
   Menu,
   X,
   Archive,
+  HandCoins,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
@@ -42,6 +43,7 @@ const siteNav = [
 
 const adminNav = [
   { to: "/admin", icon: Shield, labelKey: "nav.admin", testId: "nav-admin", end: true },
+  { to: "/admin/krediler", icon: HandCoins, labelKey: "nav.adminCredits", testId: "nav-admin-credits" },
 ];
 
 export default function Layout() {

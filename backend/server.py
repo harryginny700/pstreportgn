@@ -216,6 +216,23 @@ class Transfer(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
+class SiteCredit(BaseModel):
+    """Admin-only: Playspintech'in bir site'a verdiği kredi ve karşılık borç kaydı."""
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=uid)
+    site_id: str
+    amount: float  # verilen kredi miktarı (TL)
+    commission_pct: float  # yüzde (örn. 5.0 = %5)
+    debt: float  # hesaplanmış borç = amount * commission_pct / 100
+    note: Optional[str] = None
+    status: str = "unpaid"  # "unpaid" | "paid"
+    date: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
+    paid_at: Optional[str] = None
+    paid_by_email: Optional[str] = None
+    created_by_email: str
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
 class MonthlyRollover(BaseModel):
     """Aylık devir arşivi. Verileri silmez, sadece o ayın snapshot'ını saklar."""
     model_config = ConfigDict(extra="ignore")
@@ -316,6 +333,14 @@ class CashRegisterInput(BaseModel):
     type: Literal["main", "finance"] = "main"
     parent_id: Optional[str] = None
     initial_balance: float = 0.0
+
+
+class SiteCreditInput(BaseModel):
+    site_id: str
+    amount: float
+    commission_pct: float
+    note: Optional[str] = None
+    date: Optional[str] = None
 
 
 class DebtorInput(BaseModel):
@@ -488,6 +513,128 @@ async def delete_site(sid: str, user: dict = Depends(require_admin)):
     await log_audit(user, "site.delete", "site", sid, target_name=site_name,
                     details={"cascade": {**counts, "users": users_deleted}}, site_id=sid)
     return {"ok": True}
+
+
+# ============== ADMIN: SITE CREDITS ==============
+
+@api_router.get("/admin/site-credits")
+async def list_site_credits(
+    site_id: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    user: dict = Depends(require_admin),
+):
+    q: dict = {}
+    if site_id:
+        q["site_id"] = site_id
+    if status_filter in ("paid", "unpaid"):
+        q["status"] = status_filter
+    docs = await db.site_credits.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    site_map = {s["id"]: s["name"] for s in await db.sites.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)}
+    for d in docs:
+        d["site_name"] = site_map.get(d["site_id"], "?")
+    return docs
+
+
+@api_router.post("/admin/site-credits")
+async def create_site_credit(inp: SiteCreditInput, user: dict = Depends(require_admin)):
+    site = await db.sites.find_one({"id": inp.site_id}, {"_id": 0, "id": 1, "name": 1})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+    if inp.amount <= 0:
+        raise HTTPException(400, "Kredi miktarı 0'dan büyük olmalı")
+    if inp.commission_pct < 0:
+        raise HTTPException(400, "Yüzde 0'dan küçük olamaz")
+    debt = round(inp.amount * inp.commission_pct / 100.0, 2)
+    obj = SiteCredit(
+        site_id=inp.site_id,
+        amount=inp.amount,
+        commission_pct=inp.commission_pct,
+        debt=debt,
+        note=inp.note,
+        date=inp.date or datetime.now(timezone.utc).date().isoformat(),
+        created_by_email=user["email"],
+    )
+    await db.site_credits.insert_one(obj.model_dump())
+    await log_audit(user, "site_credit.create", "site_credit", obj.id,
+                    target_name=site["name"], site_id=inp.site_id,
+                    details={"amount": inp.amount, "pct": inp.commission_pct, "debt": debt})
+    return {**obj.model_dump(), "site_name": site["name"]}
+
+
+@api_router.put("/admin/site-credits/{cid}")
+async def update_site_credit(cid: str, inp: SiteCreditInput, user: dict = Depends(require_admin)):
+    existing = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Kredi kaydı bulunamadı")
+    site = await db.sites.find_one({"id": inp.site_id}, {"_id": 0, "id": 1, "name": 1})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+    if inp.amount <= 0 or inp.commission_pct < 0:
+        raise HTTPException(400, "Geçersiz değer")
+    debt = round(inp.amount * inp.commission_pct / 100.0, 2)
+    updates = {
+        "site_id": inp.site_id,
+        "amount": inp.amount,
+        "commission_pct": inp.commission_pct,
+        "debt": debt,
+        "note": inp.note,
+        "date": inp.date or existing.get("date"),
+    }
+    await db.site_credits.update_one({"id": cid}, {"$set": updates})
+    await log_audit(user, "site_credit.update", "site_credit", cid,
+                    target_name=site["name"], site_id=inp.site_id, details=updates)
+    doc = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    doc["site_name"] = site["name"]
+    return doc
+
+
+@api_router.patch("/admin/site-credits/{cid}/status")
+async def toggle_site_credit_status(cid: str, status: str = Query(...), user: dict = Depends(require_admin)):
+    if status not in ("paid", "unpaid"):
+        raise HTTPException(400, "status paid veya unpaid olmalı")
+    existing = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Kredi kaydı bulunamadı")
+    updates: dict = {"status": status}
+    if status == "paid":
+        updates["paid_at"] = datetime.now(timezone.utc).isoformat()
+        updates["paid_by_email"] = user["email"]
+    else:
+        updates["paid_at"] = None
+        updates["paid_by_email"] = None
+    await db.site_credits.update_one({"id": cid}, {"$set": updates})
+    await log_audit(user, "site_credit.status", "site_credit", cid,
+                    site_id=existing["site_id"], details={"status": status})
+    doc = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    site = await db.sites.find_one({"id": doc["site_id"]}, {"_id": 0, "name": 1})
+    doc["site_name"] = site.get("name") if site else "?"
+    return doc
+
+
+@api_router.delete("/admin/site-credits/{cid}")
+async def delete_site_credit(cid: str, user: dict = Depends(require_admin)):
+    existing = await db.site_credits.find_one({"id": cid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Kredi kaydı bulunamadı")
+    await db.site_credits.delete_one({"id": cid})
+    await log_audit(user, "site_credit.delete", "site_credit", cid,
+                    site_id=existing["site_id"], details={"amount": existing.get("amount")})
+    return {"ok": True}
+
+
+@api_router.get("/site-credits/mine")
+async def list_my_site_credits(user: dict = Depends(get_current_user), site_id: Optional[str] = None):
+    """Read-only list of the current (or admin-viewed) site's credits."""
+    if user.get("platform_role") == "admin":
+        sid = site_id
+    else:
+        sid = user.get("site_id")
+    if not sid:
+        return []
+    docs = await db.site_credits.find({"site_id": sid}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+
 
 
 # ============== ADMIN: USERS ==============
@@ -1112,6 +1259,18 @@ async def dashboard(
 
     site = await db.sites.find_one({"id": target_site}, {"_id": 0})
 
+    # Site Credit debt aggregation (admin-managed credits given by Playspintech to this site)
+    sc_docs = await db.site_credits.find({"site_id": target_site}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    sc_unpaid = [c for c in sc_docs if c.get("status") == "unpaid"]
+    sc_paid = [c for c in sc_docs if c.get("status") == "paid"]
+    site_credit_summary = {
+        "unpaid_debt": round(sum(c.get("debt", 0.0) for c in sc_unpaid), 2),
+        "unpaid_count": len(sc_unpaid),
+        "paid_count": len(sc_paid),
+        "total_count": len(sc_docs),
+        "recent": sc_docs[:5],  # last 5 for card display
+    }
+
     return {
         "site": site,
         "range": {"from": date_from, "to": date_to},
@@ -1124,6 +1283,7 @@ async def dashboard(
         "balances": balances,
         "daily_series": daily,
         "payment_method_distribution": pm_distribution,
+        "site_credit": site_credit_summary,
     }
 
 
