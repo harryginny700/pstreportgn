@@ -1,0 +1,46 @@
+{
+  "summary": "Backend regression suite for Sahne Finance (Turkish iGaming financial dashboard). Wrote 18 pytest cases (sequential mode) covering seed data, transaction commission formula, bulk transactions, expenses/credits/transfers balance flows, dashboard KPIs, daily/monthly reports, CSV exports, payment method updates, and forced reseed. All 18/18 tests pass. Note: pytest.ini enforces `-n 2 --dist loadscope`; two tests race with the destructive `test_seed_force_wipes_and_reseeds` under parallel mode. Run with `-n 0` for stable results.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/dashboard", "issue": "Default date range uses server local date (container is 2026-07). Frontend should always pass explicit date_from/date_to to guarantee KPI/daily_series alignment; balances are unfiltered which can confuse users comparing KPIs vs kasa balances."},
+      {"endpoint": "POST /api/seed?force=true", "issue": "Destructive endpoint has no auth; anyone can wipe all seeded lookup tables. Consider gating behind a token or removing from production build."},
+      {"endpoint": "POST /api/transactions/bulk", "issue": "Silently ignores entries with unknown payment_method_id (returns saved count without warning). Acceptable but caller cannot detect partial saves."},
+      {"endpoint": "GET /api/reports/daily", "issue": "Query param uses alias `date` (Python reserved-ish); works but doc/consumers must use ?date=YYYY-MM-DD, not date_str."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Consider protecting POST /api/seed?force=true (dangerous, no auth) - production risk",
+    "Frontend must pass explicit date_from/date_to to /api/dashboard to avoid server-clock month drift issues",
+    "server.py is 906 lines - split into routers (cash_registers, transactions, reports, exports, seed) for maintainability (>700 line threshold)"
+  ],
+  "critical_code_review_comments": [
+    "server.py 906 lines - exceeds 700 line guideline; should be split into routers/modules",
+    "compute_all_balances iterates transactions/transfers/expenses/credits one-by-one via `async for` on full collections - will not scale. Prefer $lookup aggregations or grouped queries for larger datasets.",
+    "No input validation on numeric fields for negative amounts (deposit/withdrawal/expense/transfer can be negative and silently corrupt balances). Add Pydantic constraints (Field(ge=0)).",
+    "Bulk endpoint deletes-then-inserts without a transaction — if insert fails mid-way, data for that date is lost. Consider mongo session/transactions or accumulate then swap.",
+    "POST /api/seed?force=true has no authentication; anyone with the URL can wipe metadata.",
+    "compute_all_balances treats credits.cash_register_id as optional; when None, kasa balance won't reflect credit, but dashboard KPI still counts it — leads to inconsistency between KPI and balances.",
+    "No unique index or dedupe on payment method names / kasa names; repeated seeding without force appends duplicates in edge cases (currently guarded by count check only).",
+    "GET /api/reports/daily uses alias `date` — collides with builtin; also causes ambiguity in OpenAPI docs. Consider `report_date`.",
+    "Deprecated FastAPI startup/shutdown decorators (@app.on_event) — should migrate to lifespan handlers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/__init__.py",
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "N/A - single-user app, no auth",
+  "seed_data_creation": "Suite invokes POST /api/seed?force=true at session start via `seeded` fixture; individual tests clean up their own inserted transactions/expenses/credits/transfers.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run tests via `cd /app && python -m pytest backend/tests/backend_test.py -v -n 0` (sequential). Parallel mode (-n 2, default from pytest.ini) causes 2 flaky failures because TestReseed wipes seed data mid-flight while other classes still reference stale IDs. Container date is 2026-07 — any dashboard test using default range should stick to July dates OR pass explicit date_from/date_to. Backend URL from /app/frontend/.env REACT_APP_BACKEND_URL.",
+  "rca of the issue": "N/A - no backend bugs found. One initial test failure (test_credit_added_paid_updates_dashboard) was a test-side issue: I used January dates but /api/dashboard defaults to the server's current month (July 2026). Fixed by passing explicit date_from/date_to."
+}

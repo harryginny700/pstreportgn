@@ -1,0 +1,46 @@
+{
+  "summary": "Retest of Playspintech multi-tenant backend after main agent's route-ordering fix. All 28/28 tests in /app/backend/tests/test_multitenant.py now PASS (previously 20/28 in iteration_2). The seed-defaults endpoint is now correctly registered, and GET /api/ returns {app,status} with HTTP 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "DELETE /api/payment-methods/{id} (and /debtors, /credits, /expenses, /transfers, /transactions, /cash-registers)",
+        "issue": "Still silently returns 200 on scope-miss instead of 404. Not a data leak (isolation preserved), but a confusing contract. Was flagged in iteration_2, remains unaddressed. Non-blocking."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_multitenant.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "verifications": {
+    "fix_1_seed_defaults_route_registered": "PASSED — POST /api/admin/sites/{sid}/seed-defaults now returns 200 and correctly seeds 8 kasalar + 11 payment methods + 4 debtors on a fresh site. Second call on same site returns 400 as expected.",
+    "fix_2_root_endpoint_shape": "PASSED — GET /api/ returns HTTP 200 with body {\"app\":\"Playspintech Finance\",\"status\":\"ok\"} (not 422; no stray site_id dependency).",
+    "regressions_from_iteration_2_all_8": "All 8 previously-failing tests now pass (test_seed_defaults_for_new_site, test_seed_defaults_fails_if_site_has_data, and the 6 downstream tests that depended on the seeded testsite)."
+  },
+  "action_items": [
+    "OPTIONAL (carried over from iteration_2): Add explicit 404 to DELETE endpoints on scope-miss for API hygiene.",
+    "OPTIONAL: /app/backend/pytest.ini forces `-n 2 --dist loadscope`. This test file shares a module-level STATE dict across classes and REQUIRES serial execution — must be run with `-n 0`. Running with defaults produced 23 phantom failures due to STATE not being shared across xdist workers. Consider either (a) pinning this file to a single worker via `pytest.mark.xdist_group` on all classes, or (b) documenting in the test file docstring that `-n 0` is mandatory. Report reflects the required `-n 0` run."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1156-1175 — seed-defaults endpoint now correctly precedes app.include_router(api_router). Fix is clean and minimal.",
+    "server.py:1170 root endpoint no longer takes any path/query params — good.",
+    "Pre-existing (iteration_2) DELETE silent-success pattern still present in server.py; no regression, no fix."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (28/28)",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "test_credentials": "Admin: harryginny700@gmail.com / Admin123! (verified working)",
+  "seed_data_creation": "Test suite is self-contained: creates a TEST_TestSite + one TEST_siteuser_<epoch>@example.com user, seeds defaults into it, then cascade-deletes it at the end. Cleanup verified: after successful run only Etobahis remains. Pre-run I manually cleaned up one leftover TEST_TestSite from iteration_2's failed run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend multi-tenant flow is fully green. To rerun: `cd /app && REACT_APP_BACKEND_URL=https://gaming-ledger-pro.preview.emergentagent.com python -m pytest backend/tests/test_multitenant.py -v -n 0 --junitxml=/app/test_reports/pytest/pytest_results.xml`. MUST use `-n 0` because tests share a module-level STATE dict across classes; xdist's loadscope splits classes across workers and breaks state. If a TEST_TestSite is left over from a broken prior run, delete it via `DELETE /api/admin/sites/{id}` with admin bearer token before rerun."
+}
