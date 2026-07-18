@@ -15,7 +15,7 @@ import csv
 import bcrypt
 import jwt
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 from datetime import datetime, date, timezone, timedelta
 from calendar import monthrange
 
@@ -131,6 +131,7 @@ class Site(BaseModel):
     name: str
     slug: Optional[str] = None
     active: bool = True
+    type: Optional[Literal["online", "sokak"]] = None
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -312,8 +313,18 @@ class SiteInput(BaseModel):
     name: str
     slug: Optional[str] = None
     active: bool = True
+    type: Optional[Literal["online", "sokak"]] = None
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
+
+
+class SetupInput(BaseModel):
+    """Yeni site kurulumu: site + varsayılan kasalar/ödeme yöntemleri + ilk kredi."""
+    name: str
+    type: Literal["online", "sokak"]
+    amount: float
+    commission_pct: float = 0.0
+    note: Optional[str] = None
 
 
 class TelegramConfigInput(BaseModel):
@@ -325,6 +336,7 @@ class AdminPaymentInput(BaseModel):
     date: str
     description: str
     amount: float
+    partner_name: str  # required — Ödeme hangi ortak kasadan düşülecek
     category: Optional[str] = None
     note: Optional[str] = None
 
@@ -1166,7 +1178,43 @@ def _admin_telegram_config_from_db(doc: Optional[dict]) -> dict:
     }
 
 
+async def _admin_telegram_send_safe(text: str) -> dict:
+    """Send a markdown message to the global admin Telegram group. Silent-fail with status dict.
+    Returns {'ok': bool, 'error': str|None}."""
+    cfg = await db.admin_settings.find_one({"id": "global"}, {"_id": 0})
+    if not cfg or not cfg.get("telegram_bot_token") or not cfg.get("telegram_chat_id"):
+        return {"ok": False, "error": "not_configured"}
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15.0) as tg_client:
+            resp = await tg_client.post(
+                f"https://api.telegram.org/bot{cfg['telegram_bot_token']}/sendMessage",
+                json={
+                    "chat_id": cfg["telegram_chat_id"],
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                },
+            )
+            if resp.status_code != 200:
+                body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"text": resp.text}
+                return {"ok": False, "error": body.get("description") or "telegram_api_error"}
+            return {"ok": True, "error": None}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def _partner_kasa_balance(kasa: str) -> float:
+    """Sum of all partner_kasa_movements amount for a given kasa."""
+    balance = 0.0
+    async for m in db.partner_kasa_movements.find({"kasa": kasa}, {"_id": 0, "amount": 1}):
+        balance += float(m.get("amount") or 0)
+    return round(balance, 2)
+
+
 def _fmt_admin_payments_message(date_from: str, date_to: str, rows: List[dict], total: float) -> str:
+    def _fmt_try(n: float) -> str:
+        return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     lines = [
         "*Playspintech Admin — Ödemeler*",
         f"_Dönem:_ `{date_from}` → `{date_to}`",
@@ -1177,12 +1225,12 @@ def _fmt_admin_payments_message(date_from: str, date_to: str, rows: List[dict], 
     else:
         for r in rows[:50]:  # cap to avoid Telegram limit
             cat = f" · _{r['category']}_" if r.get("category") else ""
-            lines.append(f"• `{r['date']}` — {r['description']}{cat}  →  *₺{r['amount']:,.2f}*".replace(",", "X").replace(".", ",").replace("X", "."))
+            partner = f" · _{r['partner_name']}_" if r.get("partner_name") else ""
+            lines.append(f"• `{r['date']}` — {r['description']}{cat}{partner}  →  *₺{_fmt_try(float(r['amount']))}*")
         if len(rows) > 50:
             lines.append(f"_… ve {len(rows) - 50} kayıt daha_")
     lines.append("")
-    total_str = f"{total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    lines.append(f"*Toplam:* ₺{total_str}")
+    lines.append(f"*Toplam:* ₺{_fmt_try(total)}")
     lines.append(f"*Kayıt sayısı:* {len(rows)}")
     return "\n".join(lines)
 
@@ -1211,19 +1259,35 @@ async def create_admin_payment(inp: AdminPaymentInput, user: dict = Depends(requ
         raise HTTPException(400, "Açıklama gerekli")
     if inp.amount is None or inp.amount <= 0:
         raise HTTPException(400, "Tutar 0'dan büyük olmalı")
+    if inp.partner_name not in PARTNER_KASAS:
+        raise HTTPException(400, f"Geçersiz ortak kasa. Geçerli: {PARTNER_KASAS}")
+    pid = uid()
     doc = {
-        "id": uid(),
+        "id": pid,
         "date": inp.date,
         "description": inp.description.strip(),
         "amount": float(inp.amount),
+        "partner_name": inp.partner_name,
         "category": (inp.category or "").strip() or None,
         "note": (inp.note or "").strip() or None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by_email": user.get("email"),
     }
     await db.admin_payments.insert_one(doc)
-    await log_audit(user, "admin_payment.create", "admin_payment", doc["id"],
-                    details={"amount": doc["amount"], "description": doc["description"]})
+    # Deduct from the selected partner kasa (movement type=admin_payment, negative amount)
+    mv = PartnerKasaMovement(
+        kasa=inp.partner_name,
+        type="admin_payment",
+        amount=-round(float(inp.amount), 2),
+        note=doc["description"] + (f" [{doc['category']}]" if doc["category"] else ""),
+        date=inp.date,
+        created_by_email=user["email"],
+    )
+    mv_dict = mv.model_dump()
+    mv_dict["admin_payment_id"] = pid  # link for reversal on delete/update
+    await db.partner_kasa_movements.insert_one(mv_dict)
+    await log_audit(user, "admin_payment.create", "admin_payment", pid,
+                    details={"amount": doc["amount"], "description": doc["description"], "partner_name": doc["partner_name"]})
     return {k: v for k, v in doc.items() if k != "_id"}
 
 
@@ -1243,7 +1307,7 @@ async def export_admin_payments_csv(
     docs = await db.admin_payments.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(5000)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Tarih", "Açıklama", "Kategori", "Tutar (TRY)", "Not", "Oluşturan"])
+    writer.writerow(["Tarih", "Açıklama", "Ortak Kasa", "Kategori", "Tutar (TRY)", "Not", "Oluşturan"])
     total = 0.0
     for d in docs:
         amt = float(d.get("amount", 0))
@@ -1251,6 +1315,7 @@ async def export_admin_payments_csv(
         writer.writerow([
             d.get("date", ""),
             d.get("description", ""),
+            d.get("partner_name") or "",
             d.get("category") or "",
             f"{amt:.2f}",
             d.get("note") or "",
@@ -1360,17 +1425,33 @@ async def update_admin_payment(pid: str, inp: AdminPaymentInput, user: dict = De
         raise HTTPException(400, "Açıklama gerekli")
     if inp.amount is None or inp.amount <= 0:
         raise HTTPException(400, "Tutar 0'dan büyük olmalı")
+    if inp.partner_name not in PARTNER_KASAS:
+        raise HTTPException(400, f"Geçersiz ortak kasa. Geçerli: {PARTNER_KASAS}")
     update = {
         "date": inp.date,
         "description": inp.description.strip(),
         "amount": float(inp.amount),
+        "partner_name": inp.partner_name,
         "category": (inp.category or "").strip() or None,
         "note": (inp.note or "").strip() or None,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.admin_payments.update_one({"id": pid}, {"$set": update})
+    # Reverse+recreate the partner_kasa movement
+    await db.partner_kasa_movements.delete_many({"admin_payment_id": pid})
+    mv = PartnerKasaMovement(
+        kasa=inp.partner_name,
+        type="admin_payment",
+        amount=-round(float(inp.amount), 2),
+        note=update["description"] + (f" [{update['category']}]" if update["category"] else ""),
+        date=inp.date,
+        created_by_email=user["email"],
+    )
+    mv_dict = mv.model_dump()
+    mv_dict["admin_payment_id"] = pid
+    await db.partner_kasa_movements.insert_one(mv_dict)
     await log_audit(user, "admin_payment.update", "admin_payment", pid,
-                    details={"amount": update["amount"], "description": update["description"]})
+                    details={"amount": update["amount"], "description": update["description"], "partner_name": update["partner_name"]})
     return await db.admin_payments.find_one({"id": pid}, {"_id": 0})
 
 
@@ -1380,9 +1461,268 @@ async def delete_admin_payment(pid: str, user: dict = Depends(require_admin)):
     if not existing:
         raise HTTPException(404, "Ödeme bulunamadı")
     await db.admin_payments.delete_one({"id": pid})
+    # Also drop the partner_kasa movement so the vault is restored
+    await db.partner_kasa_movements.delete_many({"admin_payment_id": pid})
     await log_audit(user, "admin_payment.delete", "admin_payment", pid,
                     details={"amount": existing.get("amount"), "description": existing.get("description")})
     return {"ok": True}
+
+
+# ============== ADMIN: SETUP (Yeni site kurulumu) ==============
+
+async def _seed_defaults_for_site(site_id: str, user: dict) -> dict:
+    """Inline seed of default kasalar + payment methods for a new site. Idempotent-ish (skip if already seeded)."""
+    existing_kasa = await db.cash_registers.count_documents({"site_id": site_id})
+    if existing_kasa > 0:
+        return {"skipped": True}
+    default_kasalar = [
+        {"name": "Ana Kasa", "type": "main", "initial_balance": 0.0, "order": 0},
+        {"name": "Finans Kasası", "type": "finance", "initial_balance": 0.0, "order": 1},
+    ]
+    kasa_ids = {}
+    for k in default_kasalar:
+        obj = CashRegister(site_id=site_id, **k)
+        await db.cash_registers.insert_one(obj.model_dump())
+        kasa_ids[k["name"]] = obj.id
+    default_methods = [
+        {"name": "Papara", "cash_register_id": kasa_ids["Ana Kasa"], "deposit_commission_pct": 0.0, "withdrawal_commission_pct": 0.0, "order": 0},
+        {"name": "Havale", "cash_register_id": kasa_ids["Ana Kasa"], "deposit_commission_pct": 0.0, "withdrawal_commission_pct": 0.0, "order": 1},
+    ]
+    for m in default_methods:
+        obj = PaymentMethod(site_id=site_id, **m)
+        await db.payment_methods.insert_one(obj.model_dump())
+    return {"kasa_count": len(default_kasalar), "method_count": len(default_methods)}
+
+
+@api_router.post("/admin/setup")
+async def admin_setup_new_site(inp: SetupInput, user: dict = Depends(require_admin)):
+    """Yeni site kurulum akışı:
+    1. Site oluştur (type: online/sokak)
+    2. Varsayılan kasalar + ödeme yöntemlerini seed'le
+    3. İlk site_credit kaydını aç (verilen kredi tutarı)
+    4. Admin Telegram grubuna kurulum bildirimi gönder (fire-and-forget)
+    """
+    name = (inp.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Site adı gerekli")
+    if inp.amount <= 0:
+        raise HTTPException(400, "Kredi miktarı 0'dan büyük olmalı")
+    if inp.commission_pct < 0:
+        raise HTTPException(400, "Komisyon oranı negatif olamaz")
+    if inp.type not in ("online", "sokak"):
+        raise HTTPException(400, "type 'online' veya 'sokak' olmalı")
+    # Uniqueness check
+    dup = await db.sites.find_one({"name": name}, {"_id": 0, "id": 1})
+    if dup:
+        raise HTTPException(400, f"'{name}' adında bir site zaten var")
+
+    # 1) Create the site
+    site = Site(name=name, type=inp.type, active=True)
+    await db.sites.insert_one(site.model_dump())
+
+    # 2) Seed defaults (best-effort)
+    seeded = await _seed_defaults_for_site(site.id, user)
+
+    # 3) Initial site credit
+    debt = round(inp.amount * inp.commission_pct / 100.0, 2)
+    credit = SiteCredit(
+        site_id=site.id,
+        amount=float(inp.amount),
+        commission_pct=float(inp.commission_pct),
+        debt=debt,
+        note=inp.note,
+        date=datetime.now(timezone.utc).date().isoformat(),
+        created_by_email=user["email"],
+    )
+    await db.site_credits.insert_one(credit.model_dump())
+
+    # 4) Audit + Telegram notification
+    await log_audit(user, "site.setup", "site", site.id, target_name=site.name,
+                    site_id=site.id,
+                    details={"type": inp.type, "amount": inp.amount, "pct": inp.commission_pct,
+                             "credit_id": credit.id, "seeded": seeded})
+
+    def _fmt_try(n: float) -> str:
+        return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    type_label = "Online" if inp.type == "online" else "Sokak"
+    msg = (
+        "*Playspintech — Yeni Site Kurulumu*\n"
+        f"_Site:_ *{site.name}*\n"
+        f"_Tip:_ `{type_label}`\n"
+        f"_Kredi:_ ₺{_fmt_try(float(inp.amount))}"
+        + (f" · Komisyon: %{inp.commission_pct:g} (Borç: ₺{_fmt_try(debt)})" if inp.commission_pct else "")
+        + "\n"
+        f"_Kurulum:_ Varsayılan kasalar + ödeme yöntemleri hazır ✓"
+    )
+    tg_result = await _admin_telegram_send_safe(msg)
+
+    return {
+        "site": site.model_dump(),
+        "credit": {**credit.model_dump(), "site_name": site.name},
+        "seeded": seeded,
+        "telegram": tg_result,
+    }
+
+
+# ============== ADMIN: REPORT (Gelir-Gider) ==============
+
+@api_router.get("/admin/report")
+async def admin_report(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    site_type: Optional[str] = Query(None, description="online | sokak | (empty=all)"),
+    user: dict = Depends(require_admin),
+):
+    today = date.today()
+    if not date_from:
+        date_from = today.replace(day=1).isoformat()
+    if not date_to:
+        _, last = monthrange(today.year, today.month)
+        date_to = today.replace(day=last).isoformat()
+
+    # Site filter (by type)
+    site_docs = await db.sites.find({}, {"_id": 0, "id": 1, "name": 1, "type": 1}).to_list(1000)
+    if site_type in ("online", "sokak"):
+        allowed_site_ids = {s["id"] for s in site_docs if s.get("type") == site_type}
+    else:
+        allowed_site_ids = {s["id"] for s in site_docs}
+    site_map = {s["id"]: s for s in site_docs}
+
+    # --- INCOME: partner_kasa credit_payment movements in date range ---
+    income_by_partner: Dict[str, float] = {p: 0.0 for p in PARTNER_KASAS}
+    income_by_site: Dict[str, float] = {}
+    total_income = 0.0
+    inc_cursor = db.partner_kasa_movements.find({
+        "type": "credit_payment",
+        "date": {"$gte": date_from, "$lte": date_to},
+    }, {"_id": 0})
+    async for m in inc_cursor:
+        sid = m.get("site_id")
+        if sid and sid not in allowed_site_ids:
+            continue
+        amt = float(m.get("amount") or 0)
+        total_income += amt
+        kasa = m.get("kasa")
+        if kasa in income_by_partner:
+            income_by_partner[kasa] += amt
+        if sid:
+            income_by_site[sid] = income_by_site.get(sid, 0.0) + amt
+
+    # --- EXPENSES: admin_payments in date range ---
+    expenses_by_partner: Dict[str, float] = {p: 0.0 for p in PARTNER_KASAS}
+    expenses_by_category: Dict[str, float] = {}
+    total_expense = 0.0
+    exp_cursor = db.admin_payments.find({
+        "date": {"$gte": date_from, "$lte": date_to},
+    }, {"_id": 0})
+    async for p in exp_cursor:
+        amt = float(p.get("amount") or 0)
+        total_expense += amt
+        pn = p.get("partner_name")
+        if pn in expenses_by_partner:
+            expenses_by_partner[pn] += amt
+        cat = p.get("category") or "Diğer"
+        expenses_by_category[cat] = expenses_by_category.get(cat, 0.0) + amt
+
+    # --- Daily trend ---
+    daily: Dict[str, Dict[str, float]] = {}
+    inc_cursor = db.partner_kasa_movements.find({
+        "type": "credit_payment",
+        "date": {"$gte": date_from, "$lte": date_to},
+    }, {"_id": 0, "date": 1, "amount": 1, "site_id": 1})
+    async for m in inc_cursor:
+        sid = m.get("site_id")
+        if sid and sid not in allowed_site_ids:
+            continue
+        d = m.get("date") or ""
+        entry = daily.setdefault(d, {"income": 0.0, "expense": 0.0})
+        entry["income"] += float(m.get("amount") or 0)
+    exp_cursor = db.admin_payments.find({
+        "date": {"$gte": date_from, "$lte": date_to},
+    }, {"_id": 0, "date": 1, "amount": 1})
+    async for p in exp_cursor:
+        d = p.get("date") or ""
+        entry = daily.setdefault(d, {"income": 0.0, "expense": 0.0})
+        entry["expense"] += float(p.get("amount") or 0)
+    daily_list = [{"date": d, "income": round(v["income"], 2), "expense": round(v["expense"], 2),
+                   "net": round(v["income"] - v["expense"], 2)}
+                  for d, v in sorted(daily.items())]
+
+    # Site breakdown for income
+    site_breakdown = [
+        {"site_id": sid, "site_name": site_map.get(sid, {}).get("name", "?"),
+         "type": site_map.get(sid, {}).get("type"), "income": round(amt, 2)}
+        for sid, amt in sorted(income_by_site.items(), key=lambda x: -x[1])
+    ]
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "site_type": site_type or None,
+        "totals": {
+            "income": round(total_income, 2),
+            "expense": round(total_expense, 2),
+            "net": round(total_income - total_expense, 2),
+        },
+        "income_by_partner": [{"partner_name": p, "amount": round(v, 2)} for p, v in income_by_partner.items()],
+        "expenses_by_partner": [{"partner_name": p, "amount": round(v, 2)} for p, v in expenses_by_partner.items()],
+        "expenses_by_category": [{"category": c, "amount": round(v, 2)} for c, v in sorted(expenses_by_category.items(), key=lambda x: -x[1])],
+        "site_breakdown": site_breakdown,
+        "daily": daily_list,
+    }
+
+
+@api_router.get("/admin/report/export.csv")
+async def admin_report_export_csv(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    site_type: Optional[str] = Query(None),
+    user: dict = Depends(require_admin),
+):
+    data = await admin_report(date_from, date_to, site_type, user)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Playspintech Admin — Gelir/Gider Raporu"])
+    writer.writerow([f"Dönem: {data['date_from']} → {data['date_to']}"])
+    if data.get("site_type"):
+        writer.writerow([f"Site Tipi Filtresi: {data['site_type']}"])
+    writer.writerow([])
+    writer.writerow(["ÖZET"])
+    writer.writerow(["Toplam Gelir", f"{data['totals']['income']:.2f}"])
+    writer.writerow(["Toplam Gider", f"{data['totals']['expense']:.2f}"])
+    writer.writerow(["Net Kâr", f"{data['totals']['net']:.2f}"])
+    writer.writerow([])
+    writer.writerow(["GELİR — Ortak Kasa Bazlı"])
+    writer.writerow(["Ortak Kasa", "Tutar (TRY)"])
+    for row in data["income_by_partner"]:
+        writer.writerow([row["partner_name"], f"{row['amount']:.2f}"])
+    writer.writerow([])
+    writer.writerow(["GİDER — Ortak Kasa Bazlı"])
+    writer.writerow(["Ortak Kasa", "Tutar (TRY)"])
+    for row in data["expenses_by_partner"]:
+        writer.writerow([row["partner_name"], f"{row['amount']:.2f}"])
+    writer.writerow([])
+    writer.writerow(["GİDER — Kategori Bazlı"])
+    writer.writerow(["Kategori", "Tutar (TRY)"])
+    for row in data["expenses_by_category"]:
+        writer.writerow([row["category"], f"{row['amount']:.2f}"])
+    writer.writerow([])
+    writer.writerow(["SİTE BAZLI GELİR"])
+    writer.writerow(["Site", "Tip", "Tutar (TRY)"])
+    for row in data["site_breakdown"]:
+        writer.writerow([row["site_name"], row.get("type") or "", f"{row['income']:.2f}"])
+    writer.writerow([])
+    writer.writerow(["GÜNLÜK TREND"])
+    writer.writerow(["Tarih", "Gelir", "Gider", "Net"])
+    for row in data["daily"]:
+        writer.writerow([row["date"], f"{row['income']:.2f}", f"{row['expense']:.2f}", f"{row['net']:.2f}"])
+    fname_from = date_from or "hepsi"
+    fname_to = date_to or "hepsi"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="admin_rapor_{fname_from}_{fname_to}.csv"'},
+    )
 
 
 # ============== ADMIN: CROSS-SITE OVERVIEW ==============

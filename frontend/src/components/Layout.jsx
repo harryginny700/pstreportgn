@@ -21,6 +21,7 @@ import {
   X,
   Archive,
   HandCoins,
+  BarChart3,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
@@ -48,6 +49,7 @@ const adminNav = [
   { to: "/admin/krediler", icon: HandCoins, labelKey: "nav.adminCredits", testId: "nav-admin-credits" },
   { to: "/admin/site-kredileri", icon: FileBarChart, labelKey: "nav.adminSiteCredits", testId: "nav-admin-site-credits" },
   { to: "/admin/odemeler", icon: Receipt, labelKey: "nav.adminPayments", testId: "nav-admin-payments" },
+  { to: "/admin/rapor", icon: BarChart3, labelKey: "nav.adminReport", testId: "nav-admin-report" },
 ];
 
 export default function Layout() {

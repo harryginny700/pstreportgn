@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { HandCoins, Plus, Trash2, Check, RotateCcw, Loader2, Percent, Landmark, Send, Archive, ArchiveRestore, Bell } from "lucide-react";
+import { HandCoins, Plus, Trash2, Check, RotateCcw, Loader2, Percent, Landmark, Send, Archive, ArchiveRestore, Bell, Rocket, Globe, Store } from "lucide-react";
 
 export default function AdminCredits() {
   const [sites, setSites] = useState([]);
@@ -19,6 +19,10 @@ export default function AdminCredits() {
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ site_id: "", amount: "", commission_pct: "", note: "" });
   const [saving, setSaving] = useState(false);
+  // Setup (Yeni Kurulum) modal
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupForm, setSetupForm] = useState({ name: "", type: "online", amount: "", commission_pct: "10", note: "" });
+  const [settingUp, setSettingUp] = useState(false);
   // Payment modal state
   const [payOpen, setPayOpen] = useState(false);
   const [payTarget, setPayTarget] = useState(null); // credit row
@@ -26,7 +30,7 @@ export default function AdminCredits() {
   const [paying, setPaying] = useState(false);
   const [reminding, setReminding] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
@@ -44,9 +48,9 @@ export default function AdminCredits() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterSite, filterStatus, viewArchived]);
 
-  useEffect(() => { load(); }, [filterSite, filterStatus, viewArchived]);
+  useEffect(() => { load(); }, [load]);
 
   const previewDebt = useMemo(() => {
     const a = parseFloat(form.amount || 0);
@@ -189,6 +193,33 @@ export default function AdminCredits() {
     }
   };
 
+  const submitSetup = async () => {
+    const name = (setupForm.name || "").trim();
+    if (!name) return toast.error("Site adı gerekli");
+    const amount = parseFloat(setupForm.amount);
+    const pct = parseFloat(setupForm.commission_pct);
+    if (isNaN(amount) || amount <= 0) return toast.error("Kredi tutarı 0'dan büyük olmalı");
+    if (isNaN(pct) || pct < 0) return toast.error("Geçerli bir komisyon oranı girin");
+    setSettingUp(true);
+    try {
+      const r = await api.post("/admin/setup", {
+        name,
+        type: setupForm.type,
+        amount,
+        commission_pct: pct,
+        note: setupForm.note || null,
+      });
+      const tg = r.data?.telegram || {};
+      toast.success(`${name} kuruldu · Kredi açıldı${tg.ok ? " · Telegram gönderildi" : (tg.error === "not_configured" ? " · Admin Telegram yapılandırılmadığından bildirim atlandı" : "")}`);
+      setSetupOpen(false);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Kurulum başarısız");
+    } finally {
+      setSettingUp(false);
+    }
+  };
+
   const totals = useMemo(() => {
     let unpaid = 0, paid = 0, totalAmount = 0, totalDebt = 0;
     rows.forEach(r => {
@@ -257,6 +288,13 @@ export default function AdminCredits() {
           </Button>
           <Button onClick={openAdd} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95" data-testid="ac-add-btn">
             <Plus className="w-3.5 h-3.5" /> Yeni Kredi
+          </Button>
+          <Button
+            onClick={() => { setSetupForm({ name: "", type: "online", amount: "", commission_pct: "10", note: "" }); setSetupOpen(true); }}
+            className="rounded-sm bg-[hsl(200_100%_55%)] text-black hover:bg-[hsl(200_100%_65%)] h-9 gap-2 active:scale-95"
+            data-testid="ac-setup-btn"
+          >
+            <Rocket className="w-3.5 h-3.5" /> Yeni Kurulum
           </Button>
         </div>
       </div>
@@ -462,6 +500,113 @@ export default function AdminCredits() {
             <Button onClick={submitPayment} disabled={paying} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95" data-testid="ac-pay-save">
               {paying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
               Ödemeyi Kaydet
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Setup (Yeni Kurulum) dialog */}
+      <Dialog open={setupOpen} onOpenChange={setSetupOpen}>
+        <DialogContent className="bg-card border-border rounded-sm max-w-md" data-testid="ac-setup-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display text-foreground flex items-center gap-2">
+              <Rocket className="w-4 h-4 text-[hsl(200_100%_55%)]" /> Yeni Site Kurulumu
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Field label="Kurulacak Site Adı">
+              <Input
+                value={setupForm.name}
+                onChange={(e) => setSetupForm({ ...setupForm, name: e.target.value })}
+                placeholder="Ör. YeniSite.com"
+                className="bg-transparent border-border rounded-sm h-9 text-sm"
+                data-testid="ac-setup-name"
+              />
+            </Field>
+            <Field label="Site Tipi">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSetupForm({ ...setupForm, type: "online" })}
+                  className={`h-11 rounded-sm border text-sm flex items-center justify-center gap-2 transition-colors ${
+                    setupForm.type === "online"
+                      ? "border-[hsl(200_100%_55%)] bg-[hsl(200_100%_55%_/_0.08)] text-[hsl(200_100%_65%)]"
+                      : "border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid="ac-setup-type-online"
+                >
+                  <Globe className="w-4 h-4" /> Online
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSetupForm({ ...setupForm, type: "sokak" })}
+                  className={`h-11 rounded-sm border text-sm flex items-center justify-center gap-2 transition-colors ${
+                    setupForm.type === "sokak"
+                      ? "border-[hsl(45_100%_55%)] bg-[hsl(45_100%_55%_/_0.08)] text-[hsl(45_100%_55%)]"
+                      : "border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid="ac-setup-type-sokak"
+                >
+                  <Store className="w-4 h-4" /> Sokak
+                </button>
+              </div>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Verilecek Kredi (₺)">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={setupForm.amount}
+                  onChange={(e) => setSetupForm({ ...setupForm, amount: e.target.value })}
+                  placeholder="0.00"
+                  className="bg-transparent border-border rounded-sm h-9 text-sm font-data"
+                  data-testid="ac-setup-amount"
+                />
+              </Field>
+              <Field label="Komisyon (%)">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={setupForm.commission_pct}
+                  onChange={(e) => setSetupForm({ ...setupForm, commission_pct: e.target.value })}
+                  className="bg-transparent border-border rounded-sm h-9 text-sm font-data"
+                  data-testid="ac-setup-pct"
+                />
+              </Field>
+            </div>
+            <Field label="Not (opsiyonel)">
+              <Input
+                value={setupForm.note}
+                onChange={(e) => setSetupForm({ ...setupForm, note: e.target.value })}
+                className="bg-transparent border-border rounded-sm h-9 text-sm"
+                data-testid="ac-setup-note"
+              />
+            </Field>
+            <div className="text-[10px] text-muted-foreground border border-border rounded-sm p-2 space-y-0.5">
+              <div>• Yeni site oluşturulur (Aktif)</div>
+              <div>• Varsayılan kasalar + ödeme yöntemleri hazırlanır</div>
+              <div>• İlk kredi kaydı açılır (aynı liste)</div>
+              <div>• Admin Telegram grubuna kurulum bildirimi gönderilir</div>
+            </div>
+          </div>
+          <DialogFooter className="flex flex-row justify-end gap-2 pt-2">
+            <Button
+              variant="ghost"
+              onClick={() => setSetupOpen(false)}
+              disabled={settingUp}
+              className="rounded-sm border border-border h-9"
+              data-testid="ac-setup-cancel"
+            >
+              İptal
+            </Button>
+            <Button
+              onClick={submitSetup}
+              disabled={settingUp}
+              className="rounded-sm bg-[hsl(200_100%_55%)] text-black hover:bg-[hsl(200_100%_65%)] h-9 gap-2 active:scale-95 disabled:opacity-60"
+              data-testid="ac-setup-save"
+            >
+              {settingUp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rocket className="w-3.5 h-3.5" />}
+              Kurulumu Başlat
             </Button>
           </DialogFooter>
         </DialogContent>

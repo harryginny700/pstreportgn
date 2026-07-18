@@ -92,6 +92,7 @@ class TestAdminPaymentsCRUD:
             "date": date.today().isoformat(),
             "description": "   ",  # blank after strip
             "amount": 100,
+            "partner_name": "Playspintech",
         }, timeout=15)
         # Server should reject blank description
         assert r.status_code in (400, 422), r.text
@@ -101,6 +102,7 @@ class TestAdminPaymentsCRUD:
             "date": date.today().isoformat(),
             "description": "TEST_zero",
             "amount": 0,
+            "partner_name": "Playspintech",
         }, timeout=15)
         assert r.status_code in (400, 422), r.text
 
@@ -109,8 +111,26 @@ class TestAdminPaymentsCRUD:
             "date": date.today().isoformat(),
             "description": "TEST_neg",
             "amount": -50,
+            "partner_name": "Playspintech",
         }, timeout=15)
         assert r.status_code in (400, 422), r.text
+
+    def test_create_missing_partner_name_422(self, admin_client):
+        r = admin_client.post(f"{BASE_URL}/api/admin/payments", json={
+            "date": date.today().isoformat(),
+            "description": "TEST_missing_partner",
+            "amount": 100,
+        }, timeout=15)
+        assert r.status_code in (400, 422), r.text
+
+    def test_create_invalid_partner_name_400(self, admin_client):
+        r = admin_client.post(f"{BASE_URL}/api/admin/payments", json={
+            "date": date.today().isoformat(),
+            "description": "TEST_invalid_partner",
+            "amount": 100,
+            "partner_name": "NotAPartner",
+        }, timeout=15)
+        assert r.status_code == 400, r.text
 
     def test_create_ok_and_persist(self, admin_client, date_range):
         payload = {
@@ -119,6 +139,7 @@ class TestAdminPaymentsCRUD:
             "amount": 25000,
             "category": "kira",
             "note": "test note",
+            "partner_name": "Playspintech",
         }
         r = admin_client.post(f"{BASE_URL}/api/admin/payments", json=payload, timeout=15)
         assert r.status_code == 200, r.text
@@ -145,6 +166,7 @@ class TestAdminPaymentsCRUD:
             "description": "TEST_Yazilim abonesi",
             "amount": 1200,
             "category": "yazilim",
+            "partner_name": "Playspintech",
         }, timeout=15)
         assert r.status_code == 200, r.text
         created = r.json()
@@ -166,6 +188,7 @@ class TestAdminPaymentsCRUD:
             "amount": 27000,
             "category": "kira",
             "note": "updated",
+            "partner_name": "Harry",
         }, timeout=15)
         assert r.status_code == 200, r.text
         upd = r.json()
@@ -177,6 +200,7 @@ class TestAdminPaymentsCRUD:
             "date": date.today().isoformat(),
             "description": "TEST_x",
             "amount": 10,
+            "partner_name": "Playspintech",
         }, timeout=15)
         assert r.status_code == 404
 
@@ -201,7 +225,7 @@ class TestAdminPaymentsCRUD:
         cd = r.headers.get("content-disposition", "")
         assert "attachment" in cd, cd
         text = r.text
-        assert "Tarih,Açıklama,Kategori,Tutar (TRY),Not,Oluşturan" in text
+        assert "Tarih,Açıklama,Ortak Kasa,Kategori,Tutar (TRY),Not,Oluşturan" in text
         assert "TOPLAM" in text
         # parse CSV and check TEST_ rows present + totals row present
         rows = list(csv.reader(io.StringIO(text)))

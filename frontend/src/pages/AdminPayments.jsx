@@ -18,10 +18,13 @@ import {
   Loader2,
   Coins,
   ListChecks,
+  Wallet,
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import TelegramPreviewDialog from "@/components/TelegramPreviewDialog";
 
-const EMPTY_FORM = { date: todayISO(), description: "", category: "", amount: "", note: "" };
+const EMPTY_FORM = { date: todayISO(), description: "", partner_name: "Playspintech", category: "", amount: "", note: "" };
+const PARTNERS = ["Playspintech", "Harry", "Bozo", "Memo"];
 
 export default function AdminPayments() {
   const [dateFrom, setDateFrom] = useState(monthStartISO());
@@ -74,6 +77,7 @@ export default function AdminPayments() {
     setForm({
       date: row.date,
       description: row.description || "",
+      partner_name: row.partner_name || "Playspintech",
       category: row.category || "",
       amount: String(row.amount ?? ""),
       note: row.note || "",
@@ -85,12 +89,14 @@ export default function AdminPayments() {
     if (!form.description.trim()) return toast.error("Açıklama girin");
     const amt = Number(form.amount);
     if (!amt || amt <= 0) return toast.error("Geçerli bir tutar girin");
+    if (!PARTNERS.includes(form.partner_name)) return toast.error("Ortak kasa seçin");
     setSaving(true);
     try {
       const payload = {
         date: form.date,
         description: form.description.trim(),
         amount: amt,
+        partner_name: form.partner_name,
         category: form.category.trim() || null,
         note: form.note.trim() || null,
       };
@@ -270,6 +276,7 @@ export default function AdminPayments() {
             <TableRow className="border-border hover:bg-transparent">
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Tarih</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Açıklama</TableHead>
+              <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Ortak Kasa</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Kategori</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground text-right">Tutar</TableHead>
               <TableHead className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Not</TableHead>
@@ -279,14 +286,14 @@ export default function AdminPayments() {
           <TableBody>
             {loading && (
               <TableRow className="border-border">
-                <TableCell colSpan={6} className="text-center text-xs text-muted-foreground font-data py-8">
+                <TableCell colSpan={7} className="text-center text-xs text-muted-foreground font-data py-8">
                   Yükleniyor...
                 </TableCell>
               </TableRow>
             )}
             {!loading && data.items.length === 0 && (
               <TableRow className="border-border">
-                <TableCell colSpan={6} className="text-center text-xs text-muted-foreground font-data py-10">
+                <TableCell colSpan={7} className="text-center text-xs text-muted-foreground font-data py-10">
                   Bu dönemde ödeme kaydı yok. "Yeni Ödeme" ile ekleyebilirsiniz.
                 </TableCell>
               </TableRow>
@@ -296,6 +303,15 @@ export default function AdminPayments() {
                 <TableRow key={row.id} className="border-border hover:bg-white/[0.02]" data-testid={`ap-row-${row.id}`}>
                   <TableCell className="font-data text-xs text-muted-foreground">{fmtDateShort(row.date)}</TableCell>
                   <TableCell className="text-sm text-foreground">{row.description}</TableCell>
+                  <TableCell className="text-xs">
+                    {row.partner_name ? (
+                      <span className="inline-flex items-center gap-1 text-[hsl(200_100%_65%)]">
+                        <Wallet className="w-3 h-3" /> {row.partner_name}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {row.category ? (
                       <span className="inline-block border border-border rounded-sm px-2 py-0.5 text-[10px] uppercase tracking-[0.15em]">
@@ -395,16 +411,33 @@ export default function AdminPayments() {
               </div>
               <div>
                 <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">
-                  Kategori
+                  Ortak Kasa <span className="text-[hsl(345_100%_65%)]">*</span>
                 </label>
-                <Input
-                  value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  placeholder="Ör. kira, personel, yazılım..."
-                  className="bg-transparent border-border rounded-sm h-9"
-                  data-testid="ap-form-category"
-                />
+                <Select value={form.partner_name} onValueChange={(v) => setForm({ ...form, partner_name: v })}>
+                  <SelectTrigger className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ap-form-partner">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PARTNERS.map((p) => (
+                      <SelectItem key={p} value={p} data-testid={`ap-form-partner-${p}`}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">
+                Kategori
+              </label>
+              <Input
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+                placeholder="Ör. kira, personel, yazılım..."
+                className="bg-transparent border-border rounded-sm h-9"
+                data-testid="ap-form-category"
+              />
             </div>
             <div>
               <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Not</label>
