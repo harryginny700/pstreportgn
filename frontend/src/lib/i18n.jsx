@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 const translations = {
   tr: {
@@ -172,14 +172,15 @@ export function I18nProvider({ children }) {
     document.documentElement.setAttribute("lang", lang);
   }, [lang]);
 
-  const t = (key, fallback) => translations[lang]?.[key] ?? translations.tr[key] ?? fallback ?? key;
-  const toggle = () => setLang((l) => (l === "tr" ? "en" : "tr"));
-
-  return (
-    <I18nCtx.Provider value={{ lang, setLang, t, toggle }}>
-      {children}
-    </I18nCtx.Provider>
+  const t = useCallback(
+    (key, fallback) => translations[lang]?.[key] ?? translations.tr[key] ?? fallback ?? key,
+    [lang]
   );
+  const toggle = useCallback(() => setLang((l) => (l === "tr" ? "en" : "tr")), []);
+
+  const value = useMemo(() => ({ lang, setLang, t, toggle }), [lang, t, toggle]);
+
+  return <I18nCtx.Provider value={value}>{children}</I18nCtx.Provider>;
 }
 
 export const useI18n = () => useContext(I18nCtx);

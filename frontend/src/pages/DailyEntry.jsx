@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY, todayISO } from "@/lib/format";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,7 @@ export default function DailyEntry() {
   const [entries, setEntries] = useState({}); // {method_id: {deposit, withdrawal}}
   const [loading, setLoading] = useState(false);
 
-  const loadForDate = async (d) => {
+  const loadForDate = useCallback(async (d) => {
     setLoading(true);
     try {
       const [m, t] = await Promise.all([
@@ -34,12 +34,11 @@ export default function DailyEntry() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadForDate(date);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date]);
+  }, [date, loadForDate]);
 
   const setVal = (pmId, field, v) => {
     setEntries((prev) => ({

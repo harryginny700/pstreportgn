@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, API } from "@/lib/api";
 import { fmtTRY, fmtDateShort, todayISO } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -23,21 +23,21 @@ export default function Reports() {
   const [rollingOver, setRollingOver] = useState(false);
   const navigate = useNavigate();
 
-  const loadMonthly = async () => {
+  const loadMonthly = useCallback(async () => {
     try {
       const r = await api.get("/reports/monthly", { params: { year, month } });
       setMonthly(r.data);
     } catch (e) { toast.error("Rapor alınamadı"); }
-  };
-  const loadDaily = async () => {
+  }, [year, month]);
+  const loadDaily = useCallback(async () => {
     try {
       const r = await api.get("/reports/daily", { params: { date: dailyDate } });
       setDaily(r.data);
     } catch (e) { toast.error("Günlük rapor alınamadı"); }
-  };
+  }, [dailyDate]);
 
-  useEffect(() => { loadMonthly(); /* eslint-disable-next-line */ }, [year, month]);
-  useEffect(() => { loadDaily(); /* eslint-disable-next-line */ }, [dailyDate]);
+  useEffect(() => { loadMonthly(); }, [loadMonthly]);
+  useEffect(() => { loadDaily(); }, [loadDaily]);
 
   const downloadFile = async (url, filename) => {
     try {

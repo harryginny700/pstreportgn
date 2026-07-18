@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY, todayISO, fmtDateShort } from "@/lib/format";
 import { Input } from "@/components/ui/input";
@@ -13,12 +13,12 @@ export default function Transfers() {
   const [transfers, setTransfers] = useState([]);
   const [form, setForm] = useState({ date: todayISO(), from_cash_register_id: "", to_cash_register_id: "", amount: 0, note: "" });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [k, t] = await Promise.all([api.get("/cash-registers"), api.get("/transfers")]);
     setKasalar(k.data);
     setTransfers(t.data);
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
     if (!form.from_cash_register_id || !form.to_cash_register_id) return toast.error("Kaynak ve hedef kasa seçin");

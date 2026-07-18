@@ -493,7 +493,7 @@ function AuditLogTab() {
   const [loading, setLoading] = useState(false);
   const PAGE_SIZE = 25;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = { limit: PAGE_SIZE, offset };
@@ -505,9 +505,9 @@ function AuditLogTab() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [offset, filter]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [offset, filter]);
+  useEffect(() => { load(); }, [load]);
 
   const fmtTs = (iso) => {
     if (!iso) return "";

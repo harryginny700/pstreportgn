@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -14,16 +14,16 @@ export default function Rollovers() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await api.get("/rollovers");
       setRollovers(r.data);
     } catch (e) { toast.error("Yüklenemedi"); }
     finally { setLoading(false); }
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const openDetail = async (id) => {
     try {

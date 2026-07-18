@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 
 const AuthCtx = createContext(null);
@@ -84,11 +84,12 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.platform_role === "admin";
   const activeSiteId = isAdmin ? adminSiteId : user?.site_id;
 
-  return (
-    <AuthCtx.Provider value={{ user, site, loading, login, completeLogin2FA, refresh, logout, isAdmin, adminSiteId, setAdminSiteId, activeSiteId }}>
-      {children}
-    </AuthCtx.Provider>
+  const value = useMemo(
+    () => ({ user, site, loading, login, completeLogin2FA, refresh, logout, isAdmin, adminSiteId, setAdminSiteId, activeSiteId }),
+    [user, site, loading, refresh, isAdmin, adminSiteId, activeSiteId]
   );
+
+  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
 export const useAuth = () => useContext(AuthCtx);

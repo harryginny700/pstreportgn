@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY, todayISO, fmtDateShort } from "@/lib/format";
 import { Input } from "@/components/ui/input";
@@ -13,12 +13,12 @@ export default function Expenses() {
   const [kasalar, setKasalar] = useState([]);
   const [form, setForm] = useState({ date: todayISO(), description: "", amount: 0, cash_register_id: "", note: "" });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [e, k] = await Promise.all([api.get("/expenses"), api.get("/cash-registers")]);
     setExpenses(e.data);
     setKasalar(k.data);
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
     if (!form.description) return toast.error("Ödeme yeri girin");

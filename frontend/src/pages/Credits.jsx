@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY, todayISO, fmtDateShort } from "@/lib/format";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ export default function Credits() {
   const [credits, setCredits] = useState([]);
   const [form, setForm] = useState({ date: todayISO(), debtor_id: "", added: 0, paid: 0, member_name: "", cash_register_id: "", note: "" });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [d, k, c] = await Promise.all([
       api.get("/debtors"),
       api.get("/cash-registers"),
@@ -23,9 +23,9 @@ export default function Credits() {
     setDebtors(d.data);
     setKasalar(k.data);
     setCredits(c.data);
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
     if (!form.debtor_id) return toast.error("Manuel sağlayıcı seçin");

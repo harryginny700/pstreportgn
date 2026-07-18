@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ export default function Settings() {
   const [newKasa, setNewKasa] = useState({ name: "", initial_balance: 0 });
   const [newDebtor, setNewDebtor] = useState({ name: "", initial_balance: 0 });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [m, k, d] = await Promise.all([
       api.get("/payment-methods"),
       api.get("/cash-registers"),
@@ -28,8 +28,8 @@ export default function Settings() {
     setKasalar(k.data);
     setDebtors(d.data);
     setEditing({});
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const setEditField = (id, field, val) => {
     setEditing((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: val } }));
