@@ -188,3 +188,60 @@ input[type='number']::-webkit-inner-spin-button {
     margin: 0;
 }
 input[type='number'] { -moz-appearance: textfield; }
+
+/* ============================================
+   DATE / TIME INPUT — DARK MODE ICON VISIBILITY
+   Native <input type="date|time|datetime-local|month|week">
+   calendar picker icons are dark SVGs by default and disappear
+   on dark backgrounds. Force color-scheme + invert filter so
+   the icon becomes visible in dark mode across all pages.
+   ============================================ */
+input[type='date'],
+input[type='time'],
+input[type='datetime-local'],
+input[type='month'],
+input[type='week'] {
+    color-scheme: light;
+}
+.dark input[type='date'],
+.dark input[type='time'],
+.dark input[type='datetime-local'],
+.dark input[type='month'],
+.dark input[type='week'] {
+    color-scheme: dark;
+}
+/* In dark mode, color-scheme:dark instructs the browser to render the
+   native calendar picker indicator in a light color automatically.
+   No manual filter needed on Chromium/Firefox — it just works. We keep
+   cursor + opacity nuances for polish. */
+.dark input[type='date']::-webkit-calendar-picker-indicator,
+.dark input[type='time']::-webkit-calendar-picker-indicator,
+.dark input[type='datetime-local']::-webkit-calendar-picker-indicator,
+.dark input[type='month']::-webkit-calendar-picker-indicator,
+.dark input[type='week']::-webkit-calendar-picker-indicator {
+    opacity: 0.9;
+    cursor: pointer;
+}
+.dark input[type='date']::-webkit-calendar-picker-indicator:hover,
+.dark input[type='time']::-webkit-calendar-picker-indicator:hover,
+.dark input[type='datetime-local']::-webkit-calendar-picker-indicator:hover,
+.dark input[type='month']::-webkit-calendar-picker-indicator:hover,
+.dark input[type='week']::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}
+/* Light mode: keep icon crisp and visible on white inputs */
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='time']::-webkit-calendar-picker-indicator,
+input[type='datetime-local']::-webkit-calendar-picker-indicator,
+input[type='month']::-webkit-calendar-picker-indicator,
+input[type='week']::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.7;
+}
+input[type='date']::-webkit-calendar-picker-indicator:hover,
+input[type='time']::-webkit-calendar-picker-indicator:hover,
+input[type='datetime-local']::-webkit-calendar-picker-indicator:hover,
+input[type='month']::-webkit-calendar-picker-indicator:hover,
+input[type='week']::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}
