@@ -30,7 +30,7 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { bootstrap(); }, [bootstrap]);
 
-  const login = async (email, password) => {
+  const login = useCallback(async (email, password) => {
     const r = await api.post("/auth/login", { email, password });
     if (r.data.requires_2fa) {
       // Return the challenge; caller (Login page) will show 2FA screen.
@@ -42,9 +42,9 @@ export function AuthProvider({ children }) {
     localStorage.removeItem("pst_admin_site_id");
     setAdminSiteIdState(null);
     return r.data.user;
-  };
+  }, []);
 
-  const completeLogin2FA = async (challenge_token, code) => {
+  const completeLogin2FA = useCallback(async (challenge_token, code) => {
     const r = await api.post("/auth/login/2fa", { challenge_token, code });
     localStorage.setItem("pst_token", r.data.token);
     setUser(r.data.user);
@@ -52,7 +52,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem("pst_admin_site_id");
     setAdminSiteIdState(null);
     return r.data.user;
-  };
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -64,29 +64,29 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem("pst_token");
     localStorage.removeItem("pst_admin_site_id");
     setUser(null);
     setSite(null);
     setAdminSiteIdState(null);
-  };
+  }, []);
 
-  const setAdminSiteId = (sid) => {
+  const setAdminSiteId = useCallback((sid) => {
     if (sid) {
       localStorage.setItem("pst_admin_site_id", sid);
     } else {
       localStorage.removeItem("pst_admin_site_id");
     }
     setAdminSiteIdState(sid);
-  };
+  }, []);
 
   const isAdmin = user?.platform_role === "admin";
   const activeSiteId = isAdmin ? adminSiteId : user?.site_id;
 
   const value = useMemo(
     () => ({ user, site, loading, login, completeLogin2FA, refresh, logout, isAdmin, adminSiteId, setAdminSiteId, activeSiteId }),
-    [user, site, loading, refresh, isAdmin, adminSiteId, activeSiteId]
+    [user, site, loading, login, completeLogin2FA, refresh, logout, isAdmin, adminSiteId, setAdminSiteId, activeSiteId]
   );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
