@@ -44,7 +44,9 @@ const siteNav = [
 
 const adminNav = [
   { to: "/admin", icon: Shield, labelKey: "nav.admin", testId: "nav-admin", end: true },
+  { to: "/admin/kasalar", icon: Wallet, labelKey: "nav.adminKasalar", testId: "nav-admin-kasalar" },
   { to: "/admin/krediler", icon: HandCoins, labelKey: "nav.adminCredits", testId: "nav-admin-credits" },
+  { to: "/admin/site-kredileri", icon: FileBarChart, labelKey: "nav.adminSiteCredits", testId: "nav-admin-site-credits" },
 ];
 
 export default function Layout() {

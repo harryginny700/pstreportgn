@@ -100,8 +100,29 @@ export default function AdminCredits() {
   const openPay = (row) => {
     const remaining = Math.max(0, (row.debt || 0) - (row.paid_amount || 0));
     setPayTarget(row);
-    setPayForm({ amount: remaining.toString(), date: new Date().toISOString().slice(0, 10), note: "" });
+    setPayForm({
+      amount: remaining.toString(),
+      date: new Date().toISOString().slice(0, 10),
+      note: "",
+      splits: { Playspintech: remaining.toString(), Harry: "0", Bozo: "0", Memo: "0" },
+    });
     setPayOpen(true);
+  };
+
+  const setSplitAmount = (partner, value) => {
+    setPayForm(p => ({ ...p, splits: { ...p.splits, [partner]: value } }));
+  };
+
+  const splitTotal = () => {
+    if (!payForm.splits) return 0;
+    return Object.values(payForm.splits).reduce((a, v) => a + (parseFloat(v) || 0), 0);
+  };
+
+  const distributeAllTo = (partner) => {
+    const amt = parseFloat(payForm.amount) || 0;
+    const next = { Playspintech: "0", Harry: "0", Bozo: "0", Memo: "0" };
+    next[partner] = amt.toString();
+    setPayForm(p => ({ ...p, splits: next }));
   };
 
   const submitPayment = async () => {
@@ -110,14 +131,18 @@ export default function AdminCredits() {
     if (isNaN(amount) || amount <= 0) return toast.error("Geçerli bir ödeme tutarı girin");
     const remaining = (payTarget.debt || 0) - (payTarget.paid_amount || 0);
     if (amount > remaining + 0.01) return toast.error(`Kalan borç ${fmtTRY(remaining)} — daha fazlası ödenemez`);
+    const splits = Object.entries(payForm.splits || {}).map(([kasa, v]) => ({ kasa, amount: parseFloat(v) || 0 })).filter(s => s.amount > 0);
+    const sTotal = splits.reduce((a, b) => a + b.amount, 0);
+    if (Math.abs(sTotal - amount) > 0.01) return toast.error(`Dağılım toplamı (${fmtTRY(sTotal)}) ödeme tutarına (${fmtTRY(amount)}) eşit olmalı`);
     setPaying(true);
     try {
       await api.post(`/admin/site-credits/${payTarget.id}/payments`, {
         amount,
         date: payForm.date || null,
         note: payForm.note || null,
+        splits,
       });
-      toast.success("Ödeme kaydedildi ve Telegram'a bildirildi");
+      toast.success("Ödeme kaydedildi ve dağıtıldı");
       setPayOpen(false);
       setPayTarget(null);
       await load();
@@ -402,8 +427,33 @@ export default function AdminCredits() {
               <Field label="Not (opsiyonel)">
                 <Input value={payForm.note} onChange={(e) => setPayForm({ ...payForm, note: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ac-pay-note" />
               </Field>
+
+              {/* Partner kasa splits */}
+              <div className="border border-border rounded-sm p-3 space-y-2 bg-background">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Ortak Kasa Dağılımı</div>
+                  <div className="text-[10px] text-muted-foreground">Toplam: <span className={`font-data ${Math.abs(splitTotal() - (parseFloat(payForm.amount) || 0)) < 0.01 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} data-testid="ac-pay-split-total">{fmtTRY(splitTotal())}</span></div>
+                </div>
+                {["Playspintech", "Harry", "Bozo", "Memo"].map(p => (
+                  <div key={p} className="grid grid-cols-[110px,1fr,auto] items-center gap-2">
+                    <div className="text-xs text-foreground font-medium">{p}</div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={payForm.splits?.[p] ?? "0"}
+                      onChange={(e) => setSplitAmount(p, e.target.value)}
+                      className="bg-transparent border-border rounded-sm h-8 text-sm font-data"
+                      data-testid={`ac-pay-split-${p}`}
+                    />
+                    <button type="button" onClick={() => distributeAllTo(p)} className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground px-1.5 py-1" title={`Tümünü ${p}'e ver`} data-testid={`ac-pay-split-all-${p}`}>
+                      Tümü
+                    </button>
+                  </div>
+                ))}
+              </div>
+
               <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-1.5">
-                <Send className="w-3 h-3" /> Ödeme sonrası siteye Telegram bildirimi gönderilecek
+                <Send className="w-3 h-3" /> Ödeme sonrası siteye Telegram bildirimi + ortak kasalara giriş yazılacak
               </div>
             </div>
           )}

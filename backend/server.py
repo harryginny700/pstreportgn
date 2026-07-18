@@ -242,6 +242,32 @@ class SiteCredit(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
+# Partner kasas — sabit 4 kasa
+PARTNER_KASAS = ["Playspintech", "Harry", "Bozo", "Memo"]
+
+
+class PartnerKasaMovement(BaseModel):
+    """Ortak kasası hareketi — kredi ödemesi girişi veya çekim çıkışı."""
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=uid)
+    kasa: str  # "Playspintech" | "Harry" | "Bozo" | "Memo"
+    type: str  # "credit_payment" | "withdrawal" | "adjustment" | "backfill"
+    amount: float  # pozitif giriş, negatif çıkış
+    site_credit_id: Optional[str] = None
+    site_id: Optional[str] = None
+    payment_ref: Optional[str] = None
+    note: Optional[str] = None
+    date: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
+    created_by_email: str
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class PartnerWithdrawInput(BaseModel):
+    amount: float
+    date: Optional[str] = None
+    note: Optional[str] = None
+
+
 class MonthlyRollover(BaseModel):
     """Aylık devir arşivi. Verileri silmez, sadece o ayın snapshot'ını saklar."""
     model_config = ConfigDict(extra="ignore")
@@ -356,6 +382,7 @@ class SiteCreditPaymentInput(BaseModel):
     amount: float
     date: Optional[str] = None
     note: Optional[str] = None
+    splits: Optional[List[dict]] = None  # [{kasa: str, amount: float}]
 
 
 class DebtorInput(BaseModel):
@@ -753,6 +780,19 @@ async def add_site_credit_payment(cid: str, inp: SiteCreditPaymentInput, user: d
         "paid_by_email": user["email"],
         "note": inp.note or None,
     }
+
+    # Partner kasa splits (manual distribution). Default: full amount → Playspintech.
+    splits = inp.splits or [{"kasa": "Playspintech", "amount": inp.amount}]
+    total_split = round(sum(float(s.get("amount", 0)) for s in splits), 2)
+    if abs(total_split - round(inp.amount, 2)) > 0.01:
+        raise HTTPException(400, f"Dağılım toplamı ödeme tutarına eşit olmalı ({total_split} ≠ {inp.amount})")
+    for s in splits:
+        if s.get("kasa") not in PARTNER_KASAS:
+            raise HTTPException(400, f"Geçersiz kasa: {s.get('kasa')}. Geçerli: {PARTNER_KASAS}")
+        if float(s.get("amount", 0)) < 0:
+            raise HTTPException(400, "Dağılım tutarları negatif olamaz")
+    payment["splits"] = [{"kasa": s["kasa"], "amount": round(float(s["amount"]), 2)} for s in splits if float(s.get("amount", 0)) > 0]
+
     new_status = "paid" if new_paid >= debt - 0.01 else "partial"
     updates: dict = {
         "paid_amount": new_paid,
@@ -762,9 +802,25 @@ async def add_site_credit_payment(cid: str, inp: SiteCreditPaymentInput, user: d
         updates["paid_at"] = payment["paid_at"]
         updates["paid_by_email"] = user["email"]
     await db.site_credits.update_one({"id": cid}, {"$set": updates, "$push": {"payments": payment}})
+
+    # Write partner kasa movements
+    for s in payment["splits"]:
+        mv = PartnerKasaMovement(
+            kasa=s["kasa"],
+            type="credit_payment",
+            amount=s["amount"],
+            site_credit_id=cid,
+            site_id=existing["site_id"],
+            payment_ref=payment["paid_at"],
+            note=inp.note,
+            date=payment["date"],
+            created_by_email=user["email"],
+        )
+        await db.partner_kasa_movements.insert_one(mv.model_dump())
+
     await log_audit(user, "site_credit.payment", "site_credit", cid,
                     site_id=existing["site_id"],
-                    details={"amount": inp.amount, "date": payment["date"], "status": new_status, "paid_total": new_paid})
+                    details={"amount": inp.amount, "date": payment["date"], "status": new_status, "paid_total": new_paid, "splits": payment["splits"]})
 
     doc = await db.site_credits.find_one({"id": cid}, {"_id": 0})
     site = await db.sites.find_one({"id": doc["site_id"]}, {"_id": 0})
@@ -830,6 +886,144 @@ async def trigger_credit_reminders(user: dict = Depends(require_admin)):
     result = await _send_all_credit_reminders()
     await log_audit(user, "site_credit.reminders_sent", "system", "reminders", details=result)
     return result
+
+
+@api_router.get("/admin/partner-kasalar")
+async def list_partner_kasalar(user: dict = Depends(require_admin)):
+    """Return the 4 partner kasas with computed balance + counters."""
+    result = []
+    for name in PARTNER_KASAS:
+        # aggregate balance
+        cursor = db.partner_kasa_movements.find({"kasa": name}, {"_id": 0, "amount": 1, "type": 1})
+        balance = 0.0
+        deposits = 0.0
+        withdrawals = 0.0
+        count = 0
+        async for m in cursor:
+            amt = float(m.get("amount") or 0)
+            balance += amt
+            if amt >= 0:
+                deposits += amt
+            else:
+                withdrawals += abs(amt)
+            count += 1
+        result.append({
+            "name": name,
+            "balance": round(balance, 2),
+            "total_deposits": round(deposits, 2),
+            "total_withdrawals": round(withdrawals, 2),
+            "movement_count": count,
+        })
+    return result
+
+
+@api_router.get("/admin/partner-kasalar/{kasa}/movements")
+async def list_partner_kasa_movements(kasa: str, limit: int = 200, user: dict = Depends(require_admin)):
+    if kasa not in PARTNER_KASAS:
+        raise HTTPException(404, "Kasa bulunamadı")
+    docs = await db.partner_kasa_movements.find({"kasa": kasa}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    # attach site names for context
+    site_ids = [d.get("site_id") for d in docs if d.get("site_id")]
+    if site_ids:
+        sites = await db.sites.find({"id": {"$in": site_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+        smap = {s["id"]: s["name"] for s in sites}
+        for d in docs:
+            d["site_name"] = smap.get(d.get("site_id"))
+    return docs
+
+
+@api_router.post("/admin/partner-kasalar/{kasa}/withdraw")
+async def withdraw_partner_kasa(kasa: str, inp: PartnerWithdrawInput, user: dict = Depends(require_admin)):
+    if kasa not in PARTNER_KASAS:
+        raise HTTPException(404, "Kasa bulunamadı")
+    if inp.amount <= 0:
+        raise HTTPException(400, "Çekim tutarı 0'dan büyük olmalı")
+    # check balance
+    cursor = db.partner_kasa_movements.find({"kasa": kasa}, {"_id": 0, "amount": 1})
+    balance = 0.0
+    async for m in cursor:
+        balance += float(m.get("amount") or 0)
+    if inp.amount > balance + 0.01:
+        raise HTTPException(400, f"Yetersiz bakiye. Mevcut: {round(balance, 2)} ₺")
+    mv = PartnerKasaMovement(
+        kasa=kasa,
+        type="withdrawal",
+        amount=-round(inp.amount, 2),
+        note=inp.note,
+        date=inp.date or datetime.now(timezone.utc).date().isoformat(),
+        created_by_email=user["email"],
+    )
+    await db.partner_kasa_movements.insert_one(mv.model_dump())
+    await log_audit(user, "partner_kasa.withdraw", "partner_kasa", kasa,
+                    details={"amount": inp.amount, "date": mv.date})
+    return {**mv.model_dump(), "new_balance": round(balance - inp.amount, 2)}
+
+
+@api_router.get("/admin/site-credits-summary")
+async def site_credits_summary(user: dict = Depends(require_admin)):
+    """Per-site aggregated credit/debt overview for the new Site Kredileri sayfası."""
+    # sites
+    sites = await db.sites.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+    smap = {s["id"]: s["name"] for s in sites}
+    # aggregate credits per site (exclude archived)
+    docs = await db.site_credits.find({"archived": {"$ne": True}}, {"_id": 0}).to_list(5000)
+    per_site: dict = {}
+    for c in docs:
+        sid = c.get("site_id")
+        agg = per_site.setdefault(sid, {
+            "site_id": sid, "site_name": smap.get(sid, "?"),
+            "total_credit": 0.0, "total_debt": 0.0, "total_paid": 0.0,
+            "total_remaining": 0.0, "unpaid_count": 0, "paid_count": 0, "partial_count": 0,
+            "credit_count": 0,
+        })
+        debt = float(c.get("debt", 0))
+        paid = float(c.get("paid_amount") or (debt if c.get("status") == "paid" else 0))
+        agg["total_credit"] += float(c.get("amount", 0))
+        agg["total_debt"] += debt
+        agg["total_paid"] += paid
+        agg["total_remaining"] += max(0.0, debt - paid)
+        agg["credit_count"] += 1
+        if c.get("status") == "paid":
+            agg["paid_count"] += 1
+        elif c.get("status") == "partial":
+            agg["partial_count"] += 1
+        else:
+            agg["unpaid_count"] += 1
+    for row in per_site.values():
+        for k in ("total_credit", "total_debt", "total_paid", "total_remaining"):
+            row[k] = round(row[k], 2)
+    return sorted(per_site.values(), key=lambda r: r["total_remaining"], reverse=True)
+
+
+async def _partner_kasa_backfill_once():
+    """Backfill: create Playspintech movements for all existing payments that have no split yet."""
+    meta = await db.system_meta.find_one({"key": "partner_kasa_backfill_v1"})
+    if meta:
+        return
+    count = 0
+    async for c in db.site_credits.find({"payments.0": {"$exists": True}}, {"_id": 0}):
+        for p in c.get("payments", []):
+            if p.get("splits"):
+                continue
+            amt = float(p.get("amount", 0))
+            if amt <= 0:
+                continue
+            mv = {
+                "id": uid(), "kasa": "Playspintech", "type": "backfill", "amount": round(amt, 2),
+                "site_credit_id": c["id"], "site_id": c.get("site_id"),
+                "payment_ref": p.get("paid_at"), "note": "Retroaktif Playspintech kasasına aktarım",
+                "date": p.get("date") or datetime.now(timezone.utc).date().isoformat(),
+                "created_by_email": "system",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.partner_kasa_movements.insert_one(mv)
+            count += 1
+    await db.system_meta.insert_one({
+        "key": "partner_kasa_backfill_v1",
+        "at": datetime.now(timezone.utc).isoformat(),
+        "moved_count": count,
+    })
+    logging.info(f"[backfill] Partner kasa: {count} historical payments migrated to Playspintech")
 
 
 @api_router.delete("/admin/site-credits/{cid}")
@@ -2354,6 +2548,11 @@ async def _startup():
         await seed_admin_and_migrate()
     except Exception as e:
         logger.error(f"Seed/migrate hatası: {e}")
+
+    try:
+        await _partner_kasa_backfill_once()
+    except Exception as e:
+        logger.error(f"Partner kasa backfill hatası: {e}")
 
     # Start daily credit-reminder background task
     app.state.reminder_task = asyncio.create_task(_daily_reminder_loop())
