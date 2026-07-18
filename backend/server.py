@@ -321,6 +321,14 @@ class TelegramConfigInput(BaseModel):
     telegram_chat_id: Optional[str] = None
 
 
+class AdminPaymentInput(BaseModel):
+    date: str
+    description: str
+    amount: float
+    category: Optional[str] = None
+    note: Optional[str] = None
+
+
 class TransactionInput(BaseModel):
     date: str
     payment_method_id: str
@@ -1144,6 +1152,236 @@ async def delete_user(uid_: str, user: dict = Depends(require_admin)):
     if target:
         await log_audit(user, "user.delete", "user", uid_, target_name=target.get("email"),
                         site_id=target.get("site_id"))
+    return {"ok": True}
+
+
+# ============== ADMIN: PAYMENTS (Admin's own expense ledger) ==============
+
+def _admin_telegram_config_from_db(doc: Optional[dict]) -> dict:
+    doc = doc or {}
+    return {
+        "telegram_bot_token": doc.get("telegram_bot_token") or "",
+        "telegram_chat_id": doc.get("telegram_chat_id") or "",
+        "configured": bool(doc.get("telegram_bot_token") and doc.get("telegram_chat_id")),
+    }
+
+
+def _fmt_admin_payments_message(date_from: str, date_to: str, rows: List[dict], total: float) -> str:
+    lines = [
+        "*Playspintech Admin — Ödemeler*",
+        f"_Dönem:_ `{date_from}` → `{date_to}`",
+        "",
+    ]
+    if not rows:
+        lines.append("_Bu dönemde ödeme kaydı yok._")
+    else:
+        for r in rows[:50]:  # cap to avoid Telegram limit
+            cat = f" · _{r['category']}_" if r.get("category") else ""
+            lines.append(f"• `{r['date']}` — {r['description']}{cat}  →  *₺{r['amount']:,.2f}*".replace(",", "X").replace(".", ",").replace("X", "."))
+        if len(rows) > 50:
+            lines.append(f"_… ve {len(rows) - 50} kayıt daha_")
+    lines.append("")
+    total_str = f"{total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    lines.append(f"*Toplam:* ₺{total_str}")
+    lines.append(f"*Kayıt sayısı:* {len(rows)}")
+    return "\n".join(lines)
+
+
+@api_router.get("/admin/payments")
+async def list_admin_payments(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    user: dict = Depends(require_admin),
+):
+    q: dict = {}
+    if date_from and date_to:
+        q["date"] = {"$gte": date_from, "$lte": date_to}
+    elif date_from:
+        q["date"] = {"$gte": date_from}
+    elif date_to:
+        q["date"] = {"$lte": date_to}
+    docs = await db.admin_payments.find(q, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(2000)
+    total = round(sum(float(d.get("amount", 0)) for d in docs), 2)
+    return {"items": docs, "total": total, "count": len(docs)}
+
+
+@api_router.post("/admin/payments")
+async def create_admin_payment(inp: AdminPaymentInput, user: dict = Depends(require_admin)):
+    if not inp.description.strip():
+        raise HTTPException(400, "Açıklama gerekli")
+    if inp.amount is None or inp.amount <= 0:
+        raise HTTPException(400, "Tutar 0'dan büyük olmalı")
+    doc = {
+        "id": uid(),
+        "date": inp.date,
+        "description": inp.description.strip(),
+        "amount": float(inp.amount),
+        "category": (inp.category or "").strip() or None,
+        "note": (inp.note or "").strip() or None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by_email": user.get("email"),
+    }
+    await db.admin_payments.insert_one(doc)
+    await log_audit(user, "admin_payment.create", "admin_payment", doc["id"],
+                    details={"amount": doc["amount"], "description": doc["description"]})
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.get("/admin/payments/export.csv")
+async def export_admin_payments_csv(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    user: dict = Depends(require_admin),
+):
+    q: dict = {}
+    if date_from and date_to:
+        q["date"] = {"$gte": date_from, "$lte": date_to}
+    elif date_from:
+        q["date"] = {"$gte": date_from}
+    elif date_to:
+        q["date"] = {"$lte": date_to}
+    docs = await db.admin_payments.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(5000)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Tarih", "Açıklama", "Kategori", "Tutar (TRY)", "Not", "Oluşturan"])
+    total = 0.0
+    for d in docs:
+        amt = float(d.get("amount", 0))
+        total += amt
+        writer.writerow([
+            d.get("date", ""),
+            d.get("description", ""),
+            d.get("category") or "",
+            f"{amt:.2f}",
+            d.get("note") or "",
+            d.get("created_by_email") or "",
+        ])
+    writer.writerow([])
+    writer.writerow(["TOPLAM", "", "", f"{total:.2f}", "", ""])
+    fname_from = date_from or "hepsi"
+    fname_to = date_to or "hepsi"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="admin_odemeler_{fname_from}_{fname_to}.csv"'},
+    )
+
+
+@api_router.get("/admin/payments/telegram-config")
+async def get_admin_payments_telegram_config(user: dict = Depends(require_admin)):
+    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0})
+    return _admin_telegram_config_from_db(doc)
+
+
+@api_router.put("/admin/payments/telegram-config")
+async def set_admin_payments_telegram_config(inp: TelegramConfigInput, user: dict = Depends(require_admin)):
+    update = {
+        "telegram_bot_token": (inp.telegram_bot_token or "").strip() or None,
+        "telegram_chat_id": (inp.telegram_chat_id or "").strip() or None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.admin_settings.update_one(
+        {"id": "global"},
+        {"$set": update, "$setOnInsert": {"id": "global", "created_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    await log_audit(user, "admin_payments.telegram_config", "admin_settings", "global",
+                    details={"configured": bool(update["telegram_bot_token"] and update["telegram_chat_id"])})
+    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0})
+    return _admin_telegram_config_from_db(doc)
+
+
+@api_router.get("/admin/payments/telegram-preview")
+async def preview_admin_payments_telegram(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    user: dict = Depends(require_admin),
+):
+    today = date.today()
+    if not date_from:
+        date_from = today.replace(day=1).isoformat()
+    if not date_to:
+        _, last = monthrange(today.year, today.month)
+        date_to = today.replace(day=last).isoformat()
+    result = await list_admin_payments(date_from, date_to, user)
+    msg = _fmt_admin_payments_message(date_from, date_to, result["items"], result["total"])
+    cfg = await db.admin_settings.find_one({"id": "global"}, {"_id": 0})
+    return {"message": msg, "configured": bool((cfg or {}).get("telegram_bot_token") and (cfg or {}).get("telegram_chat_id"))}
+
+
+@api_router.post("/admin/payments/send-telegram")
+async def send_admin_payments_telegram(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    user: dict = Depends(require_admin),
+):
+    cfg = await db.admin_settings.find_one({"id": "global"}, {"_id": 0})
+    if not cfg or not cfg.get("telegram_bot_token") or not cfg.get("telegram_chat_id"):
+        raise HTTPException(400, "Admin Telegram yapılandırması tanımlı değil. Bu sayfadaki Telegram Ayarları bölümünden bot token ve chat ID ekleyin.")
+    today = date.today()
+    if not date_from:
+        date_from = today.replace(day=1).isoformat()
+    if not date_to:
+        _, last = monthrange(today.year, today.month)
+        date_to = today.replace(day=last).isoformat()
+    result = await list_admin_payments(date_from, date_to, user)
+    msg = _fmt_admin_payments_message(date_from, date_to, result["items"], result["total"])
+
+    import httpx
+    url = f"https://api.telegram.org/bot{cfg['telegram_bot_token']}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as tg_client:
+            resp = await tg_client.post(url, json={
+                "chat_id": cfg["telegram_chat_id"],
+                "text": msg,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            })
+            if resp.status_code != 200:
+                body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"text": resp.text}
+                desc = body.get("description", "Telegram API hatası")
+                raise HTTPException(502, f"Telegram: {desc}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Telegram bağlantı hatası: {e}")
+
+    await log_audit(user, "admin_payments.telegram_send", "admin_payments", "range",
+                    details={"date_from": date_from, "date_to": date_to, "count": result["count"], "total": result["total"]})
+    return {"ok": True, "count": result["count"], "total": result["total"]}
+
+
+@api_router.put("/admin/payments/{pid}")
+async def update_admin_payment(pid: str, inp: AdminPaymentInput, user: dict = Depends(require_admin)):
+    existing = await db.admin_payments.find_one({"id": pid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Ödeme bulunamadı")
+    if not inp.description.strip():
+        raise HTTPException(400, "Açıklama gerekli")
+    if inp.amount is None or inp.amount <= 0:
+        raise HTTPException(400, "Tutar 0'dan büyük olmalı")
+    update = {
+        "date": inp.date,
+        "description": inp.description.strip(),
+        "amount": float(inp.amount),
+        "category": (inp.category or "").strip() or None,
+        "note": (inp.note or "").strip() or None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.admin_payments.update_one({"id": pid}, {"$set": update})
+    await log_audit(user, "admin_payment.update", "admin_payment", pid,
+                    details={"amount": update["amount"], "description": update["description"]})
+    return await db.admin_payments.find_one({"id": pid}, {"_id": 0})
+
+
+@api_router.delete("/admin/payments/{pid}")
+async def delete_admin_payment(pid: str, user: dict = Depends(require_admin)):
+    existing = await db.admin_payments.find_one({"id": pid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Ödeme bulunamadı")
+    await db.admin_payments.delete_one({"id": pid})
+    await log_audit(user, "admin_payment.delete", "admin_payment", pid,
+                    details={"amount": existing.get("amount"), "description": existing.get("description")})
     return {"ok": True}
 
 

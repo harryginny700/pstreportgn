@@ -19,6 +19,7 @@ import AdminCredits from "@/pages/AdminCredits";
 import ReceivedCredits from "@/pages/ReceivedCredits";
 import AdminPartnerKasalar from "@/pages/AdminPartnerKasalar";
 import AdminSiteCreditsSummary from "@/pages/AdminSiteCreditsSummary";
+import AdminPayments from "@/pages/AdminPayments";
 import Profile from "@/pages/Profile";
 import Rollovers from "@/pages/Rollovers";
 import { Loader2 } from "lucide-react";
@@ -58,6 +59,7 @@ function AppRoutes() {
         <Route path="/admin/krediler" element={<ProtectedRoute adminOnly><AdminCredits /></ProtectedRoute>} />
         <Route path="/admin/kasalar" element={<ProtectedRoute adminOnly><AdminPartnerKasalar /></ProtectedRoute>} />
         <Route path="/admin/site-kredileri" element={<ProtectedRoute adminOnly><AdminSiteCreditsSummary /></ProtectedRoute>} />
+        <Route path="/admin/odemeler" element={<ProtectedRoute adminOnly><AdminPayments /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
