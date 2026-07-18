@@ -21,7 +21,7 @@ export default function AdminCredits() {
   const [saving, setSaving] = useState(false);
   // Setup (Yeni Kurulum) modal
   const [setupOpen, setSetupOpen] = useState(false);
-  const [setupForm, setSetupForm] = useState({ name: "", type: "online", amount: "", commission_pct: "10", note: "" });
+  const [setupForm, setSetupForm] = useState({ name: "", type: "online", amount: "", commission_pct: "10", setup_fee: "", setup_fee_partner_name: "Playspintech", note: "" });
   const [settingUp, setSettingUp] = useState(false);
   // Payment modal state
   const [payOpen, setPayOpen] = useState(false);
@@ -200,17 +200,34 @@ export default function AdminCredits() {
     const pct = parseFloat(setupForm.commission_pct);
     if (isNaN(amount) || amount <= 0) return toast.error("Kredi tutarı 0'dan büyük olmalı");
     if (isNaN(pct) || pct < 0) return toast.error("Geçerli bir komisyon oranı girin");
+    const setupFeeRaw = (setupForm.setup_fee || "").toString().trim();
+    let setupFee = 0;
+    if (setupFeeRaw !== "") {
+      setupFee = parseFloat(setupFeeRaw);
+      if (isNaN(setupFee) || setupFee < 0) return toast.error("Kurulum ücreti geçersiz");
+    }
+    if (setupFee > 0 && !["Playspintech", "Harry", "Bozo", "Memo"].includes(setupForm.setup_fee_partner_name)) {
+      return toast.error("Kurulum ücreti için kasa seçin");
+    }
     setSettingUp(true);
     try {
-      const r = await api.post("/admin/setup", {
+      const payload = {
         name,
         type: setupForm.type,
         amount,
         commission_pct: pct,
         note: setupForm.note || null,
-      });
+      };
+      if (setupFee > 0) {
+        payload.setup_fee = setupFee;
+        payload.setup_fee_partner_name = setupForm.setup_fee_partner_name;
+      }
+      const r = await api.post("/admin/setup", payload);
       const tg = r.data?.telegram || {};
-      toast.success(`${name} kuruldu · Kredi açıldı${tg.ok ? " · Telegram gönderildi" : (tg.error === "not_configured" ? " · Admin Telegram yapılandırılmadığından bildirim atlandı" : "")}`);
+      const feeMsg = r.data?.setup_fee
+        ? ` · Kurulum ücreti ₺${new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2 }).format(r.data.setup_fee.amount)} → ${r.data.setup_fee.kasa}`
+        : "";
+      toast.success(`${name} kuruldu · Kredi açıldı${feeMsg}${tg.ok ? " · Telegram gönderildi" : (tg.error === "not_configured" ? " · Admin Telegram yapılandırılmadığından bildirim atlandı" : "")}`);
       setSetupOpen(false);
       await load();
     } catch (e) {
@@ -290,7 +307,7 @@ export default function AdminCredits() {
             <Plus className="w-3.5 h-3.5" /> Yeni Kredi
           </Button>
           <Button
-            onClick={() => { setSetupForm({ name: "", type: "online", amount: "", commission_pct: "10", note: "" }); setSetupOpen(true); }}
+            onClick={() => { setSetupForm({ name: "", type: "online", amount: "", commission_pct: "10", setup_fee: "", setup_fee_partner_name: "Playspintech", note: "" }); setSetupOpen(true); }}
             className="rounded-sm bg-[hsl(200_100%_55%)] text-black hover:bg-[hsl(200_100%_65%)] h-9 gap-2 active:scale-95"
             data-testid="ac-setup-btn"
           >
@@ -574,6 +591,36 @@ export default function AdminCredits() {
                 />
               </Field>
             </div>
+            <div className="grid grid-cols-2 gap-3 border-t border-border pt-3">
+              <Field label="Kurulum Tutarı (₺) — opsiyonel">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={setupForm.setup_fee}
+                  onChange={(e) => setSetupForm({ ...setupForm, setup_fee: e.target.value })}
+                  placeholder="0.00"
+                  className="bg-transparent border-border rounded-sm h-9 text-sm font-data"
+                  data-testid="ac-setup-fee"
+                />
+              </Field>
+              <Field label="Gelir Girecek Kasa">
+                <Select
+                  value={setupForm.setup_fee_partner_name || "Playspintech"}
+                  onValueChange={(v) => setSetupForm({ ...setupForm, setup_fee_partner_name: v })}
+                >
+                  <SelectTrigger className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ac-setup-fee-partner">
+                    <SelectValue placeholder="Kasa seçin" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["Playspintech", "Harry", "Bozo", "Memo"].map((p) => (
+                      <SelectItem key={p} value={p} data-testid={`ac-setup-fee-partner-${p}`}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
             <Field label="Not (opsiyonel)">
               <Input
                 value={setupForm.note}
@@ -586,6 +633,7 @@ export default function AdminCredits() {
               <div>• Yeni site oluşturulur (Aktif)</div>
               <div>• Varsayılan kasalar + ödeme yöntemleri hazırlanır</div>
               <div>• İlk kredi kaydı açılır (aynı liste)</div>
+              <div>• Kurulum ücreti girilirse seçilen ortak kasaya gelir olarak eklenir</div>
               <div>• Admin Telegram grubuna kurulum bildirimi gönderilir</div>
             </div>
           </div>

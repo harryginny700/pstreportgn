@@ -319,11 +319,13 @@ class SiteInput(BaseModel):
 
 
 class SetupInput(BaseModel):
-    """Yeni site kurulumu: site + varsayılan kasalar/ödeme yöntemleri + ilk kredi."""
+    """Yeni site kurulumu: site + varsayılan kasalar/ödeme yöntemleri + ilk kredi + opsiyonel kurulum ücreti."""
     name: str
     type: Literal["online", "sokak"]
     amount: float
     commission_pct: float = 0.0
+    setup_fee: float = 0.0  # Playspintech admin kazancı (0 ise atlanır)
+    setup_fee_partner_name: Optional[str] = None  # setup_fee>0 ise zorunlu
     note: Optional[str] = None
 
 
@@ -1511,6 +1513,11 @@ async def admin_setup_new_site(inp: SetupInput, user: dict = Depends(require_adm
         raise HTTPException(400, "Komisyon oranı negatif olamaz")
     if inp.type not in ("online", "sokak"):
         raise HTTPException(400, "type 'online' veya 'sokak' olmalı")
+    if inp.setup_fee and inp.setup_fee < 0:
+        raise HTTPException(400, "Kurulum ücreti negatif olamaz")
+    if inp.setup_fee and inp.setup_fee > 0:
+        if not inp.setup_fee_partner_name or inp.setup_fee_partner_name not in PARTNER_KASAS:
+            raise HTTPException(400, f"Kurulum ücreti için geçerli bir kasa seçin. Geçerli: {PARTNER_KASAS}")
     # Uniqueness check
     dup = await db.sites.find_one({"name": name}, {"_id": 0, "id": 1})
     if dup:
@@ -1536,29 +1543,52 @@ async def admin_setup_new_site(inp: SetupInput, user: dict = Depends(require_adm
     )
     await db.site_credits.insert_one(credit.model_dump())
 
+    # 3b) Setup fee → partner_kasa movement (income for the selected kasa)
+    setup_fee_movement = None
+    if inp.setup_fee and inp.setup_fee > 0:
+        mv = PartnerKasaMovement(
+            kasa=inp.setup_fee_partner_name,
+            type="setup_fee",
+            amount=round(float(inp.setup_fee), 2),  # POSITIVE = income
+            note=f"Kurulum ücreti — {site.name}",
+            date=datetime.now(timezone.utc).date().isoformat(),
+            site_id=site.id,
+            created_by_email=user["email"],
+        )
+        mv_dict = mv.model_dump()
+        mv_dict["related_site_id"] = site.id
+        await db.partner_kasa_movements.insert_one(mv_dict)
+        setup_fee_movement = {"kasa": inp.setup_fee_partner_name, "amount": float(inp.setup_fee)}
+
     # 4) Audit + Telegram notification
     await log_audit(user, "site.setup", "site", site.id, target_name=site.name,
                     site_id=site.id,
                     details={"type": inp.type, "amount": inp.amount, "pct": inp.commission_pct,
-                             "credit_id": credit.id, "seeded": seeded})
+                             "credit_id": credit.id, "seeded": seeded,
+                             "setup_fee": inp.setup_fee, "setup_fee_partner_name": inp.setup_fee_partner_name})
 
     def _fmt_try(n: float) -> str:
         return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     type_label = "Online" if inp.type == "online" else "Sokak"
-    msg = (
-        "*Playspintech — Yeni Site Kurulumu*\n"
-        f"_Site:_ *{site.name}*\n"
-        f"_Tip:_ `{type_label}`\n"
+    msg_lines = [
+        "*Playspintech — Yeni Site Kurulumu*",
+        f"_Site:_ *{site.name}*",
+        f"_Tip:_ `{type_label}`",
         f"_Kredi:_ ₺{_fmt_try(float(inp.amount))}"
-        + (f" · Komisyon: %{inp.commission_pct:g} (Borç: ₺{_fmt_try(debt)})" if inp.commission_pct else "")
-        + "\n"
-        f"_Kurulum:_ Varsayılan kasalar + ödeme yöntemleri hazır ✓"
-    )
+        + (f" · Komisyon: %{inp.commission_pct:g} (Borç: ₺{_fmt_try(debt)})" if inp.commission_pct else ""),
+    ]
+    if setup_fee_movement:
+        msg_lines.append(
+            f"_Kurulum Ücreti:_ ₺{_fmt_try(setup_fee_movement['amount'])} → *{setup_fee_movement['kasa']}* kasasına gelir"
+        )
+    msg_lines.append("_Kurulum:_ Varsayılan kasalar + ödeme yöntemleri hazır ✓")
+    msg = "\n".join(msg_lines)
     tg_result = await _admin_telegram_send_safe(msg)
 
     return {
         "site": site.model_dump(),
         "credit": {**credit.model_dump(), "site_name": site.name},
+        "setup_fee": setup_fee_movement,
         "seeded": seeded,
         "telegram": tg_result,
     }
@@ -1588,12 +1618,12 @@ async def admin_report(
         allowed_site_ids = {s["id"] for s in site_docs}
     site_map = {s["id"]: s for s in site_docs}
 
-    # --- INCOME: partner_kasa credit_payment movements in date range ---
+    # --- INCOME: partner_kasa credit_payment + setup_fee movements in date range ---
     income_by_partner: Dict[str, float] = {p: 0.0 for p in PARTNER_KASAS}
     income_by_site: Dict[str, float] = {}
     total_income = 0.0
     inc_cursor = db.partner_kasa_movements.find({
-        "type": "credit_payment",
+        "type": {"$in": ["credit_payment", "setup_fee"]},
         "date": {"$gte": date_from, "$lte": date_to},
     }, {"_id": 0})
     async for m in inc_cursor:
@@ -1627,7 +1657,7 @@ async def admin_report(
     # --- Daily trend ---
     daily: Dict[str, Dict[str, float]] = {}
     inc_cursor = db.partner_kasa_movements.find({
-        "type": "credit_payment",
+        "type": {"$in": ["credit_payment", "setup_fee"]},
         "date": {"$gte": date_from, "$lte": date_to},
     }, {"_id": 0, "date": 1, "amount": 1, "site_id": 1})
     async for m in inc_cursor:
