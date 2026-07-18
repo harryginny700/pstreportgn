@@ -16,8 +16,8 @@ import requests
 from datetime import date
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "https://gaming-ledger-pro.preview.emergentagent.com").rstrip("/")
-ADMIN_EMAIL = "harryginny700@gmail.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("PST_TEST_ADMIN_EMAIL", "harryginny700@gmail.com")
+ADMIN_PASSWORD = os.environ.get("PST_TEST_ADMIN_PASSWORD", "Admin123!")
 
 
 # ---------------- Fixtures ----------------

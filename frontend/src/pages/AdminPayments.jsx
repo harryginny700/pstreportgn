@@ -60,7 +60,9 @@ export default function AdminPayments() {
     try {
       const r = await api.get("/admin/payments/telegram-config");
       setTgCfg(r.data);
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      console.warn("loadTgCfg failed:", e?.response?.status || e?.message);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
