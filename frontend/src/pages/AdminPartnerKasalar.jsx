@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Wallet, MinusCircle, Loader2, TrendingUp, TrendingDown, ExternalLink } from "lucide-react";
+import { Wallet, MinusCircle, Loader2, TrendingUp, TrendingDown, ExternalLink, Send } from "lucide-react";
 
 const PARTNERS = ["Playspintech", "Harry", "Bozo", "Memo"];
 
@@ -19,8 +19,9 @@ export default function AdminPartnerKasalar() {
   const [wdKasa, setWdKasa] = useState(null);
   const [wdForm, setWdForm] = useState({ amount: "", date: "", note: "" });
   const [wdBusy, setWdBusy] = useState(false);
+  const [sending, setSending] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await api.get("/admin/partner-kasalar");
@@ -30,6 +31,18 @@ export default function AdminPartnerKasalar() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const sendSummary = async () => {
+    setSending(true);
+    try {
+      const r = await api.post("/admin/notifications/send-partner-summary");
+      if (r.data?.ok) toast.success("Ortak Kasa özeti Telegram'a gönderildi ✓");
+      else if (r.data?.error === "disabled") toast.warning("Ortak Kasa bildirimi kapalı — Bot Ayarları'ndan açın");
+      else if (r.data?.error === "not_configured") toast.warning("Bot yapılandırılmamış — Bot Ayarları sayfasından ekleyin");
+      else toast.error(`Gönderilemedi: ${r.data?.error || "bilinmeyen"}`);
+    } catch (e) { toast.error("Gönderim başarısız"); }
+    finally { setSending(false); }
   };
 
   const loadMovements = async (name) => {
@@ -74,7 +87,7 @@ export default function AdminPartnerKasalar() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const totalBalance = useMemo(() => kasalar.reduce((a, b) => a + (b.balance || 0), 0), [kasalar]);
 
@@ -82,11 +95,23 @@ export default function AdminPartnerKasalar() {
 
   return (
     <div className="space-y-6" data-testid="admin-partner-kasalar-page">
-      <div className="border border-border rounded-sm bg-card p-6">
-        <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-2">Toplam Ortak Kasa Bakiyesi</div>
-        <div className={`font-data text-4xl font-light tracking-tight ${totalBalance >= 0 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} data-testid="pk-total-balance">
-          {fmtTRY(totalBalance)}
+      <div className="border border-border rounded-sm bg-card p-6 flex items-center justify-between gap-4">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground mb-2">Toplam Ortak Kasa Bakiyesi</div>
+          <div className={`font-data text-4xl font-light tracking-tight ${totalBalance >= 0 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} data-testid="pk-total-balance">
+            {fmtTRY(totalBalance)}
+          </div>
         </div>
+        <Button
+          onClick={sendSummary}
+          disabled={sending}
+          variant="outline"
+          className="rounded-sm border-border h-9 gap-2"
+          data-testid="pk-send-summary"
+          title="Ortak Kasa bakiyelerini admin Telegram grubuna gönder"
+        >
+          {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Telegram'a Özet Gönder
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">

@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { HandCoins, Landmark, Check, AlertCircle } from "lucide-react";
+import { HandCoins, Landmark, Check, AlertCircle, Send, Loader2 } from "lucide-react";
 
 export default function AdminSiteCreditsSummary() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -21,6 +23,18 @@ export default function AdminSiteCreditsSummary() {
       }
     })();
   }, []);
+
+  const sendSummary = async () => {
+    setSending(true);
+    try {
+      const r = await api.post("/admin/notifications/send-site-credits-summary");
+      if (r.data?.ok) toast.success("Site Kredileri özeti Telegram'a gönderildi ✓");
+      else if (r.data?.error === "disabled") toast.warning("Site Kredi bildirimi kapalı — Bot Ayarları'ndan açın");
+      else if (r.data?.error === "not_configured") toast.warning("Bot yapılandırılmamış — Bot Ayarları sayfasından ekleyin");
+      else toast.error(`Gönderilemedi: ${r.data?.error || "bilinmeyen"}`);
+    } catch (e) { toast.error("Gönderim başarısız"); }
+    finally { setSending(false); }
+  };
 
   const totals = useMemo(() => {
     let credit = 0, debt = 0, paid = 0, remaining = 0;
@@ -36,6 +50,20 @@ export default function AdminSiteCreditsSummary() {
         <Card icon={Landmark} label="Toplam Oluşan Borç" value={fmtTRY(totals.debt)} />
         <Card icon={Check} label="Toplam Alınan Ödeme" value={fmtTRY(totals.paid)} tone="success" />
         <Card icon={AlertCircle} label="Toplam Bekleyen" value={fmtTRY(totals.remaining)} tone={totals.remaining > 0 ? "warning" : "muted"} testid="scs-total-remaining" />
+      </div>
+
+      {/* Send-to-Telegram action */}
+      <div className="flex justify-end">
+        <Button
+          onClick={sendSummary}
+          disabled={sending}
+          variant="outline"
+          className="rounded-sm border-border h-9 gap-2"
+          data-testid="scs-send-summary"
+          title="Site Kredi durumunu admin Telegram grubuna gönder"
+        >
+          {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Telegram'a Özet Gönder
+        </Button>
       </div>
 
       {/* Table */}

@@ -73,6 +73,15 @@ Turkish iGaming operator finance dashboard. Playspintech = provider (parent bran
   - Backend: `GET /api/admin/report?date_from=&date_to=&site_type=` — income = sum of partner_kasa_movements where type∈{`credit_payment`, `setup_fee`}; expenses = admin_payments docs
   - Backend: `GET /api/admin/report/export.csv` — full CSV export
 - **Testing (iteration_7.json + iteration_8.json)**: Combined 57/57 backend pytest + 21/21 initial frontend + 12 admin_setup_report scenarios = **100% PASS**. Zero console errors. Test files: `/app/backend/tests/test_admin_payments.py` + `/app/backend/tests/test_admin_setup_report.py`.
+- **Admin Telegram Bot — Merkezi Bildirim Sistemi (2026-02-18)**: Central admin notification hub. Route `/admin/bot`, sidebar nav "Telegram Botu" with Bot icon.
+  - **Backend**: `_admin_notify(event_type, text)` helper checks per-event preferences in `admin_settings.notification_prefs` dict, sends Telegram, and logs to `admin_notification_logs` (capped at last 500).
+  - **6 event types** (all default ON): partner_movement, site_credit_created, site_credit_paid, site_setup, admin_payment_created, daily_digest.
+  - **Hooks**: (a) `POST /admin/site-credits` → notify site_credit_created; (b) `add_site_credit_payment` → notify site_credit_paid with split details; (c) `withdraw_partner_kasa` → notify partner_movement; (d) `admin_setup_new_site` → notify site_setup (refactored from previous impl); (e) `create_admin_payment` → notify admin_payment_created.
+  - **Daily digest**: `_admin_daily_digest_loop()` background task fires at 10:00 Europe/Istanbul (07:00 UTC), sends period totals + partner breakdown.
+  - **New endpoints (require_admin)**: `GET/PUT /api/admin/notifications/config`, `POST /api/admin/notifications/test`, `GET /api/admin/notifications/logs`, `POST /api/admin/notifications/send-partner-summary`, `POST /api/admin/notifications/send-site-credits-summary`.
+  - **Frontend `AdminBot.jsx`**: 3 sections — Bot Yapılandırması (token+chatId+Test), Otomatik Bildirim Ayarları (6 shadcn Switch toggles), Son Bildirimler (log tablosu with status icons).
+  - **Manual send buttons added to**: AdminPartnerKasalar (Telegram'a Özet Gönder), AdminSiteCreditsSummary (Telegram'a Özet Gönder). AdminCredits (Hatırlatma Gönder) and AdminPayments (Telegram'a Gönder) already exist.
+  - **Housekeeping**: Renamed conflicting duplicate `_fmt_try` helper in notification block to `_amt` (no ₺ suffix); old `_fmt_try` at bottom of file kept intact for `_fmt_daily_message` usage. Backend curl verified message formatting is clean.
 
 ## Backlog (P1/P2)
 - P1: Password change / forgot password flow

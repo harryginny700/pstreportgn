@@ -334,6 +334,22 @@ class TelegramConfigInput(BaseModel):
     telegram_chat_id: Optional[str] = None
 
 
+DEFAULT_NOTIFICATION_PREFS = {
+    "partner_movement": True,
+    "site_credit_created": True,
+    "site_credit_paid": True,
+    "site_setup": True,
+    "admin_payment_created": True,
+    "daily_digest": True,
+}
+
+
+class AdminNotificationConfigInput(BaseModel):
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    notification_prefs: Optional[Dict[str, bool]] = None
+
+
 class AdminPaymentInput(BaseModel):
     date: str
     description: str
@@ -748,8 +764,17 @@ async def create_site_credit(inp: SiteCreditInput, user: dict = Depends(require_
     await log_audit(user, "site_credit.create", "site_credit", obj.id,
                     target_name=site["name"], site_id=inp.site_id,
                     details={"amount": inp.amount, "pct": inp.commission_pct, "debt": debt})
-    # Fire-and-forget Telegram notification
+    # Fire-and-forget Telegram notifications (site-scoped + admin-global)
     await _telegram_send_safe(site, _fmt_credit_created_message(site["name"], obj.model_dump()))
+    admin_msg = (
+        "*Playspintech — Yeni Kredi Açıldı*\n"
+        f"_Site:_ *{site['name']}*\n"
+        f"_Kredi:_ ₺{_amt(float(inp.amount))}"
+        + (f" · Komisyon: %{inp.commission_pct:g} (Borç: ₺{_amt(debt)})" if inp.commission_pct else "")
+    )
+    if inp.note:
+        admin_msg += f"\n_Not:_ {inp.note}"
+    await _admin_notify("site_credit_created", admin_msg)
     return {**obj.model_dump(), "site_name": site["name"]}
 
 
@@ -847,8 +872,17 @@ async def add_site_credit_payment(cid: str, inp: SiteCreditPaymentInput, user: d
     doc = await db.site_credits.find_one({"id": cid}, {"_id": 0})
     site = await db.sites.find_one({"id": doc["site_id"]}, {"_id": 0})
     doc["site_name"] = site.get("name") if site else "?"
-    # Fire-and-forget Telegram notification
+    # Fire-and-forget Telegram notifications (site + admin-global)
     await _telegram_send_safe(site, _fmt_credit_payment_message(doc["site_name"], doc, payment["amount"], payment["date"]))
+    splits_txt = ", ".join([f"{s['kasa']} ₺{_amt(float(s['amount']))}" for s in payment["splits"]]) if payment.get("splits") else "—"
+    admin_msg = (
+        "*Playspintech — Kredi Ödemesi Alındı*\n"
+        f"_Site:_ *{doc['site_name']}*\n"
+        f"_Ödeme:_ ₺{_amt(float(payment['amount']))} · _Tarih:_ `{payment['date']}`\n"
+        f"_Kalan Borç:_ ₺{_amt(float(doc.get('debt', 0)) - float(doc.get('paid_amount', 0)))} · _Durum:_ `{new_status}`\n"
+        f"_Dağıtım:_ {splits_txt}"
+    )
+    await _admin_notify("site_credit_paid", admin_msg)
     return doc
 
 
@@ -978,6 +1012,14 @@ async def withdraw_partner_kasa(kasa: str, inp: PartnerWithdrawInput, user: dict
     await db.partner_kasa_movements.insert_one(mv.model_dump())
     await log_audit(user, "partner_kasa.withdraw", "partner_kasa", kasa,
                     details={"amount": inp.amount, "date": mv.date})
+    await _admin_notify(
+        "partner_movement",
+        f"*Ortak Kasa — Çekim*\n"
+        f"_Kasa:_ *{kasa}*\n"
+        f"_Tutar:_ −₺{_amt(float(inp.amount))}\n"
+        f"_Yeni Bakiye:_ ₺{_amt(balance - inp.amount)}"
+        + (f"\n_Not:_ {inp.note}" if inp.note else "")
+    )
     return {**mv.model_dump(), "new_balance": round(balance - inp.amount, 2)}
 
 
@@ -1206,6 +1248,53 @@ async def _admin_telegram_send_safe(text: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+async def _admin_notify(event_type: str, text: str) -> dict:
+    """Higher-level helper: check notification prefs, send Telegram, log to admin_notification_logs.
+    event_type must be one of DEFAULT_NOTIFICATION_PREFS keys. Silent-fail — never raises."""
+    try:
+        cfg = await db.admin_settings.find_one({"id": "global"}, {"_id": 0})
+        prefs = (cfg or {}).get("notification_prefs") or DEFAULT_NOTIFICATION_PREFS
+        # Missing key falls back to default True (opt-in by default for new event types)
+        enabled = prefs.get(event_type, DEFAULT_NOTIFICATION_PREFS.get(event_type, True))
+        if not enabled:
+            await db.admin_notification_logs.insert_one({
+                "id": uid(),
+                "event_type": event_type,
+                "status": "skipped_disabled",
+                "text_preview": text[:200],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            return {"ok": False, "error": "disabled"}
+        result = await _admin_telegram_send_safe(text)
+        await db.admin_notification_logs.insert_one({
+            "id": uid(),
+            "event_type": event_type,
+            "status": "sent" if result.get("ok") else f"failed:{result.get('error')}",
+            "text_preview": text[:200],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        # Cap log to last 500 entries
+        count = await db.admin_notification_logs.count_documents({})
+        if count > 500:
+            excess = count - 500
+            oldest = await db.admin_notification_logs.find({}, {"_id": 0, "id": 1}).sort([("created_at", 1)]).limit(excess).to_list(excess)
+            if oldest:
+                await db.admin_notification_logs.delete_many({"id": {"$in": [x["id"] for x in oldest]}})
+        return result
+    except Exception as e:
+        logging.warning(f"[_admin_notify] {event_type} failed: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+def _amt(n: float) -> str:
+    """Turkish TRY number formatting without currency symbol. 1234.5 → '1.234,50'"""
+    try:
+        s = f"{float(n):,.2f}"
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return str(n)
+
+
 async def _partner_kasa_balance(kasa: str) -> float:
     """Sum of all partner_kasa_movements amount for a given kasa."""
     balance = 0.0
@@ -1290,6 +1379,15 @@ async def create_admin_payment(inp: AdminPaymentInput, user: dict = Depends(requ
     await db.partner_kasa_movements.insert_one(mv_dict)
     await log_audit(user, "admin_payment.create", "admin_payment", pid,
                     details={"amount": doc["amount"], "description": doc["description"], "partner_name": doc["partner_name"]})
+    await _admin_notify(
+        "admin_payment_created",
+        f"*Playspintech — Yeni Ödeme*\n"
+        f"_Açıklama:_ {doc['description']}\n"
+        f"_Tutar:_ ₺{_amt(float(doc['amount']))}\n"
+        f"_Ortak Kasa:_ *{doc['partner_name']}* (kasadan düşüldü)\n"
+        f"_Tarih:_ `{doc['date']}`"
+        + (f"\n_Kategori:_ _{doc['category']}_" if doc.get("category") else "")
+    )
     return {k: v for k, v in doc.items() if k != "_id"}
 
 
@@ -1470,6 +1568,169 @@ async def delete_admin_payment(pid: str, user: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# ============== ADMIN: NOTIFICATIONS (Central Bot Settings) ==============
+
+@api_router.get("/admin/notifications/config")
+async def get_admin_notification_config(user: dict = Depends(require_admin)):
+    """Return admin bot config + notification preferences."""
+    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    prefs = doc.get("notification_prefs") or {}
+    # Merge with defaults so missing keys are surfaced as True
+    merged = {**DEFAULT_NOTIFICATION_PREFS, **{k: bool(v) for k, v in prefs.items() if k in DEFAULT_NOTIFICATION_PREFS}}
+    return {
+        "telegram_bot_token": doc.get("telegram_bot_token") or "",
+        "telegram_chat_id": doc.get("telegram_chat_id") or "",
+        "configured": bool(doc.get("telegram_bot_token") and doc.get("telegram_chat_id")),
+        "notification_prefs": merged,
+    }
+
+
+@api_router.put("/admin/notifications/config")
+async def set_admin_notification_config(inp: AdminNotificationConfigInput, user: dict = Depends(require_admin)):
+    update: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if inp.telegram_bot_token is not None:
+        update["telegram_bot_token"] = inp.telegram_bot_token.strip() or None
+    if inp.telegram_chat_id is not None:
+        update["telegram_chat_id"] = inp.telegram_chat_id.strip() or None
+    if inp.notification_prefs is not None:
+        # Only keep known keys
+        clean = {k: bool(v) for k, v in inp.notification_prefs.items() if k in DEFAULT_NOTIFICATION_PREFS}
+        update["notification_prefs"] = {**DEFAULT_NOTIFICATION_PREFS, **clean}
+    await db.admin_settings.update_one(
+        {"id": "global"},
+        {"$set": update, "$setOnInsert": {"id": "global", "created_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    await log_audit(user, "admin.notifications_config", "admin_settings", "global",
+                    details={k: (bool(v) if k != "notification_prefs" else v) for k, v in update.items() if k != "updated_at"})
+    return await get_admin_notification_config(user)
+
+
+@api_router.post("/admin/notifications/test")
+async def test_admin_notification(user: dict = Depends(require_admin)):
+    """Send a test message to verify the bot config."""
+    msg = (
+        "*Playspintech — Bot Test*\n"
+        f"_Gönderen:_ `{user.get('email')}`\n"
+        f"_Zaman:_ `{datetime.now(timezone.utc).astimezone().isoformat(timespec='seconds')}`\n"
+        "Bot yapılandırması çalışıyor ✅"
+    )
+    result = await _admin_telegram_send_safe(msg)
+    await db.admin_notification_logs.insert_one({
+        "id": uid(),
+        "event_type": "test",
+        "status": "sent" if result.get("ok") else f"failed:{result.get('error')}",
+        "text_preview": msg[:200],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return result
+
+
+@api_router.get("/admin/notifications/logs")
+async def list_admin_notification_logs(limit: int = 50, user: dict = Depends(require_admin)):
+    logs = await db.admin_notification_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(min(limit, 200))
+    return {"items": logs, "count": len(logs)}
+
+
+@api_router.post("/admin/notifications/send-partner-summary")
+async def send_partner_summary_telegram(user: dict = Depends(require_admin)):
+    """Manual: send an instant summary of all 4 partner vault balances."""
+    lines = ["*Ortak Kasa Bakiye Özeti*", ""]
+    total = 0.0
+    for kasa in PARTNER_KASAS:
+        bal = 0.0
+        async for m in db.partner_kasa_movements.find({"kasa": kasa}, {"_id": 0, "amount": 1}):
+            bal += float(m.get("amount") or 0)
+        total += bal
+        emoji = "🟢" if bal >= 0 else "🔴"
+        lines.append(f"{emoji} *{kasa}:* ₺{_amt(round(bal, 2))}")
+    lines.append("")
+    lines.append(f"_Toplam:_ *₺{_amt(round(total, 2))}*")
+    lines.append(f"_Zaman:_ `{datetime.now(timezone.utc).date().isoformat()}`")
+    msg = "\n".join(lines)
+    result = await _admin_notify("partner_movement", msg)  # reuse partner_movement pref
+    return {**result, "message": msg}
+
+
+@api_router.post("/admin/notifications/send-site-credits-summary")
+async def send_site_credits_summary_telegram(user: dict = Depends(require_admin)):
+    """Manual: send Site Credits (borç/ödeme) summary."""
+    summary = await site_credits_summary(user)
+    lines = ["*Site Kredileri Özet*", ""]
+    grand_credit = grand_debt = grand_paid = grand_rem = 0.0
+    for row in summary[:30]:  # cap
+        lines.append(
+            f"• *{row['site_name']}*  →  Verilen ₺{_amt(row['total_credit'])} · "
+            f"Borç ₺{_amt(row['total_debt'])} · Ödenen ₺{_amt(row['total_paid'])} · "
+            f"*Kalan ₺{_amt(row['total_remaining'])}*"
+        )
+        grand_credit += row["total_credit"]
+        grand_debt += row["total_debt"]
+        grand_paid += row["total_paid"]
+        grand_rem += row["total_remaining"]
+    if len(summary) > 30:
+        lines.append(f"_… ve {len(summary) - 30} site daha_")
+    lines.append("")
+    lines.append(
+        f"*Toplam:* Verilen ₺{_amt(round(grand_credit, 2))} · Borç ₺{_amt(round(grand_debt, 2))} · "
+        f"Ödenen ₺{_amt(round(grand_paid, 2))} · *Kalan ₺{_amt(round(grand_rem, 2))}*"
+    )
+    msg = "\n".join(lines)
+    result = await _admin_notify("site_credit_paid", msg)  # reuse pref
+    return {**result, "message": msg}
+
+
+async def _admin_daily_digest():
+    """Compose and send a daily digest to the admin group. Uses admin_report for today's data."""
+    today = date.today()
+    date_from = today.isoformat()
+    date_to = today.isoformat()
+    # Fake user dict to satisfy admin_report signature (audit not needed for internal call)
+    dummy = {"email": "system", "platform_role": "admin"}
+    try:
+        report = await admin_report(date_from, date_to, None, dummy)
+    except Exception as e:
+        logging.warning(f"[daily_digest] Report failed: {e}")
+        return {"ok": False, "error": "report_failed"}
+    totals = report.get("totals", {})
+    lines = [
+        "*Playspintech — Günlük Özet*",
+        f"_Tarih:_ `{today.isoformat()}`",
+        "",
+        f"💰 *Gelir:* ₺{_amt(totals.get('income', 0.0))}",
+        f"💸 *Gider:* ₺{_amt(totals.get('expense', 0.0))}",
+        f"📊 *Net:* ₺{_amt(totals.get('net', 0.0))}",
+    ]
+    # Include per-partner income if any
+    inc_lines = [f"  {r['partner_name']}: ₺{_amt(r['amount'])}"
+                 for r in report.get("income_by_partner", []) if r.get("amount")]
+    if inc_lines:
+        lines.append("")
+        lines.append("_Ortak Kasalara Giren:_")
+        lines.extend(inc_lines)
+    return await _admin_notify("daily_digest", "\n".join(lines))
+
+
+async def _admin_daily_digest_loop():
+    """Background task: send daily digest at 10:00 Europe/Istanbul (07:00 UTC)."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            target = now.replace(hour=7, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            sleep_sec = (target - now).total_seconds()
+            logging.info(f"[digest] Next daily digest in {int(sleep_sec / 60)} min at {target.isoformat()}")
+            await asyncio.sleep(sleep_sec)
+            result = await _admin_daily_digest()
+            logging.info(f"[digest] Result: {result}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logging.error(f"[digest] Loop error: {e}")
+            await asyncio.sleep(300)
+
+
 # ============== ADMIN: SETUP (Yeni site kurulumu) ==============
 
 async def _seed_defaults_for_site(site_id: str, user: dict) -> dict:
@@ -1583,7 +1844,7 @@ async def admin_setup_new_site(inp: SetupInput, user: dict = Depends(require_adm
         )
     msg_lines.append("_Kurulum:_ Varsayılan kasalar + ödeme yöntemleri hazır ✓")
     msg = "\n".join(msg_lines)
-    tg_result = await _admin_telegram_send_safe(msg)
+    tg_result = await _admin_notify("site_setup", msg)
 
     return {
         "site": site.model_dump(),
@@ -3164,6 +3425,7 @@ async def _startup():
 
     # Start daily credit-reminder background task
     app.state.reminder_task = asyncio.create_task(_daily_reminder_loop())
+    app.state.digest_task = asyncio.create_task(_admin_daily_digest_loop())
 
 
 @app.on_event("shutdown")
