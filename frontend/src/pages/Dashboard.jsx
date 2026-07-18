@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { fmtTRY, fmtDayMonth, todayISO, monthStartISO, monthEndISO } from "@/lib/format";
 import KpiCard from "@/components/KpiCard";
@@ -51,8 +51,8 @@ function TooltipBox({ active, payload, label }) {
   return (
     <div className="bg-black border border-border p-3 rounded-sm text-xs font-data">
       <div className="text-neutral-400 mb-1">{label}</div>
-      {payload.map((p, i) => (
-        <div key={i} className="flex items-center gap-2">
+      {payload.map((p) => (
+        <div key={p.dataKey || p.name} className="flex items-center gap-2">
           <span className="w-2 h-2" style={{ background: p.color }} />
           <span className="text-neutral-300">{p.name}:</span>
           <span className="text-white">{fmtTRY(p.value)}</span>
@@ -68,7 +68,7 @@ export default function Dashboard() {
   const [dateFrom, setDateFrom] = useState(monthStartISO());
   const [dateTo, setDateTo] = useState(monthEndISO());
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await api.get("/dashboard", { params: { date_from: dateFrom, date_to: dateTo } });
@@ -78,12 +78,11 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   if (loading || !data) {
     return <div className="text-neutral-500 text-sm font-data">Yükleniyor...</div>;
@@ -252,7 +251,7 @@ export default function Dashboard() {
                 <PieChart>
                   <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={95} paddingAngle={2}>
                     {pieData.map((entry, i) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} stroke="hsl(0 0% 6%)" strokeWidth={2} />
+                      <Cell key={entry.name} fill={CHART_COLORS[i % CHART_COLORS.length]} stroke="hsl(0 0% 6%)" strokeWidth={2} />
                     ))}
                   </Pie>
                   <Tooltip content={<TooltipBox />} />
@@ -278,8 +277,8 @@ export default function Dashboard() {
               <YAxis stroke="rgba(255,255,255,0.4)" tick={{ fontSize: 10, fontFamily: "JetBrains Mono" }} />
               <Tooltip content={<TooltipBox />} />
               <Bar dataKey="Bakiye" radius={[2, 2, 0, 0]}>
-                {kasaBars.map((entry, i) => (
-                  <Cell key={i} fill={entry.Bakiye >= 0 ? "hsl(144 100% 50%)" : "hsl(345 100% 60%)"} />
+                {kasaBars.map((entry) => (
+                  <Cell key={entry.name} fill={entry.Bakiye >= 0 ? "hsl(144 100% 50%)" : "hsl(345 100% 60%)"} />
                 ))}
               </Bar>
             </BarChart>

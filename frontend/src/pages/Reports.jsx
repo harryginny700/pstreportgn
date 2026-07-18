@@ -123,7 +123,7 @@ export default function Reports() {
                 <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}>
                   <SelectTrigger className="w-36 bg-transparent border-border rounded-sm h-9" data-testid="reports-month"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {MONTHS.map((m, i) => <SelectItem key={i} value={String(i + 1)}>{m}</SelectItem>)}
+                    {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

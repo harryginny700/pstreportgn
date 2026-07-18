@@ -60,7 +60,7 @@ export function AuthProvider({ children }) {
       setUser(r.data.user);
       setSite(r.data.site);
     } catch (e) {
-      // ignore
+      console.warn("auth.refresh failed:", e?.response?.status || e?.message);
     }
   }, []);
 

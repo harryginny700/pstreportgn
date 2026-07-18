@@ -24,8 +24,8 @@ if not BASE_URL:
 
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "harryginny700@gmail.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "harryginny700@gmail.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin123!")
 
 # --------- Session-scoped state carried between tests ---------
 STATE = {}

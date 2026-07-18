@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { fmtTRY, monthStartISO, monthEndISO } from "@/lib/format";
@@ -28,25 +28,24 @@ export default function AdminHome() {
   const [userForm, setUserForm] = useState({ user_type: "site", email: "", password: "", name: "", site_id: "", site_role: "operator" });
   const [userDialog, setUserDialog] = useState(false);
 
-  const loadSites = async () => {
+  const loadSites = useCallback(async () => {
     const r = await api.get("/admin/sites");
     setSites(r.data);
-  };
-  const loadUsers = async () => {
+  }, []);
+  const loadUsers = useCallback(async () => {
     const r = await api.get("/admin/users");
     setUsers(r.data);
-  };
-  const loadOverview = async () => {
+  }, []);
+  const loadOverview = useCallback(async () => {
     const r = await api.get("/admin/overview", { params: { date_from: dateFrom, date_to: dateTo } });
     setOverview(r.data);
-  };
+  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     loadSites();
     loadUsers();
     loadOverview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadSites, loadUsers, loadOverview]);
 
   const submitSite = async () => {
     if (!siteForm.name.trim()) return toast.error("Site ismi girin");
