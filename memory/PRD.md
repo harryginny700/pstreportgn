@@ -82,6 +82,14 @@ Turkish iGaming operator finance dashboard. Playspintech = provider (parent bran
   - **Frontend `AdminBot.jsx`**: 3 sections — Bot Yapılandırması (token+chatId+Test), Otomatik Bildirim Ayarları (6 shadcn Switch toggles), Son Bildirimler (log tablosu with status icons).
   - **Manual send buttons added to**: AdminPartnerKasalar (Telegram'a Özet Gönder), AdminSiteCreditsSummary (Telegram'a Özet Gönder). AdminCredits (Hatırlatma Gönder) and AdminPayments (Telegram'a Gönder) already exist.
   - **Housekeeping**: Renamed conflicting duplicate `_fmt_try` helper in notification block to `_amt` (no ₺ suffix); old `_fmt_try` at bottom of file kept intact for `_fmt_daily_message` usage. Backend curl verified message formatting is clean.
+- **USD para birimi desteği (2026-02-19)**: Multi-currency (TRY/USD) at credit + payment level.
+  - **Backend**: Added `admin_settings.usd_rate` (global, default 30.0) with GET/PUT `/api/admin/settings/usd-rate`. Extended models: `SiteCredit` gets `exchange_rate`, `amount_usd`, `debt_usd`, `paid_amount_usd`; `SiteCreditPaymentInput` gets `paid_currency` ("TRY"|"USD") and per-payment `exchange_rate`; `AdminPaymentInput` gets `exchange_rate`; `SetupInput` gets `exchange_rate`.
+  - **Logic**: Credit creation locks its own `exchange_rate` (so USD-denominated debt is fixed). Payment in USD is converted to TRY at credit's locked rate — so USD debt is respected. Payment in TL uses payment-time rate for informational USD equivalent. `paid_amount` (TRY) and `paid_amount_usd` both tracked. Debt status calc unchanged (based on TRY).
+  - **Frontend `AdminBot.jsx`**: New "USD / TRY Kuru" section at top of Bot Ayarları — admin sets/updates global rate.
+  - **Frontend `AdminCredits.jsx`**: Kredi Ödendi dialog gets **TL/USD toggle** (`ac-pay-cur-try` / `ac-pay-cur-usd`), auto-convert display, USD equivalent shown for Toplam Borç / Şu ana kadar ödenmiş / Kalan Borç, and "Sabit Kur" info. Splits still in TRY (converted from USD if needed). Toast confirms USD payment.
+  - **Telegram bildirimleri**: Kredi oluşturma + kredi ödeme mesajları artık her iki para birimini gösteriyor (₺X ≈ $Y + Kur: 1 USD = Z TRY).
+  - **Test (curl doğrulaması)**: `10000 TL @ 45% komisyon` → borç `4500 TL = 100 USD (rate 45)`. `100 USD ödeme` → `paid_amount=4500 TL, paid_amount_usd=100, status='paid'` ✅ (Kullanıcı örneği tam uygulandı).
+  - **Legacy note**: Eski `site_credits` kayıtları için USD alanları null (yeni açılanlarda otomatik). Eski krediye USD ödeme yapmak istersen backend fallback current_rate kullanır.
 
 ## Backlog (P1/P2)
 - P1: Password change / forgot password flow

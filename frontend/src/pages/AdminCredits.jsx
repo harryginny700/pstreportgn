@@ -26,7 +26,7 @@ export default function AdminCredits() {
   // Payment modal state
   const [payOpen, setPayOpen] = useState(false);
   const [payTarget, setPayTarget] = useState(null); // credit row
-  const [payForm, setPayForm] = useState({ amount: "", date: "", note: "" });
+  const [payForm, setPayForm] = useState({ amount: "", date: "", note: "", paid_currency: "TRY" });
   const [paying, setPaying] = useState(false);
   const [reminding, setReminding] = useState(false);
 
@@ -108,6 +108,7 @@ export default function AdminCredits() {
       amount: remaining.toString(),
       date: new Date().toISOString().slice(0, 10),
       note: "",
+      paid_currency: "TRY",
       splits: { Playspintech: remaining.toString(), Harry: "0", Bozo: "0", Memo: "0" },
     });
     setPayOpen(true);
@@ -123,9 +124,12 @@ export default function AdminCredits() {
   };
 
   const distributeAllTo = (partner) => {
+    // Distribute the TL-equivalent (splits are always TRY)
+    const rate = parseFloat(payTarget?.exchange_rate) || 30;
     const amt = parseFloat(payForm.amount) || 0;
+    const amtTry = payForm.paid_currency === "USD" ? amt * rate : amt;
     const next = { Playspintech: "0", Harry: "0", Bozo: "0", Memo: "0" };
-    next[partner] = amt.toString();
+    next[partner] = amtTry.toString();
     setPayForm(p => ({ ...p, splits: next }));
   };
 
@@ -133,11 +137,23 @@ export default function AdminCredits() {
     if (!payTarget) return;
     const amount = parseFloat(payForm.amount);
     if (isNaN(amount) || amount <= 0) return toast.error("Geçerli bir ödeme tutarı girin");
-    const remaining = (payTarget.debt || 0) - (payTarget.paid_amount || 0);
-    if (amount > remaining + 0.01) return toast.error(`Kalan borç ${fmtTRY(remaining)} — daha fazlası ödenemez`);
+    const isUsd = payForm.paid_currency === "USD";
+    const rate = parseFloat(payTarget.exchange_rate) || 30;
+    const remainingTry = (payTarget.debt || 0) - (payTarget.paid_amount || 0);
+    const remainingUsd = (payTarget.debt_usd || 0) - (payTarget.paid_amount_usd || 0);
+    // Validate against the correct currency's remaining
+    if (isUsd) {
+      if (amount > remainingUsd + 0.01) return toast.error(`Kalan USD borç $${remainingUsd.toFixed(2)} — daha fazlası ödenemez`);
+    } else {
+      if (amount > remainingTry + 0.01) return toast.error(`Kalan borç ${fmtTRY(remainingTry)} — daha fazlası ödenemez`);
+    }
+    // For splits: convert USD to TRY (at credit's locked rate) to keep splits in TRY
+    const amountTryForSplits = isUsd ? amount * rate : amount;
     const splits = Object.entries(payForm.splits || {}).map(([kasa, v]) => ({ kasa, amount: parseFloat(v) || 0 })).filter(s => s.amount > 0);
     const sTotal = splits.reduce((a, b) => a + b.amount, 0);
-    if (Math.abs(sTotal - amount) > 0.01) return toast.error(`Dağılım toplamı (${fmtTRY(sTotal)}) ödeme tutarına (${fmtTRY(amount)}) eşit olmalı`);
+    if (Math.abs(sTotal - amountTryForSplits) > 0.01) {
+      return toast.error(`Dağılım toplamı (${fmtTRY(sTotal)}) ödeme TL karşılığına (${fmtTRY(amountTryForSplits)}) eşit olmalı`);
+    }
     setPaying(true);
     try {
       await api.post(`/admin/site-credits/${payTarget.id}/payments`, {
@@ -145,8 +161,9 @@ export default function AdminCredits() {
         date: payForm.date || null,
         note: payForm.note || null,
         splits,
+        paid_currency: payForm.paid_currency || "TRY",
       });
-      toast.success("Ödeme kaydedildi ve dağıtıldı");
+      toast.success(isUsd ? `$${amount} USD ödeme kaydedildi` : "Ödeme kaydedildi ve dağıtıldı");
       setPayOpen(false);
       setPayTarget(null);
       await load();
@@ -460,20 +477,72 @@ export default function AdminCredits() {
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Toplam Borç</span>
-                  <span className="font-data text-foreground">{fmtTRY(payTarget.debt)}</span>
+                  <span className="font-data text-foreground">
+                    {fmtTRY(payTarget.debt)}
+                    {payTarget.debt_usd ? <span className="text-muted-foreground ml-1">· ${payTarget.debt_usd.toFixed(2)}</span> : null}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Şu ana kadar ödenmiş</span>
-                  <span className="font-data text-[hsl(144_100%_55%)]">{fmtTRY(payTarget.paid_amount || 0)}</span>
+                  <span className="font-data text-[hsl(144_100%_55%)]">
+                    {fmtTRY(payTarget.paid_amount || 0)}
+                    {payTarget.paid_amount_usd ? <span className="text-muted-foreground ml-1">· ${(payTarget.paid_amount_usd || 0).toFixed(2)}</span> : null}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between text-xs pt-1 border-t border-border">
                   <span className="text-muted-foreground uppercase tracking-[0.2em] text-[10px]">Kalan Borç</span>
-                  <span className="font-data text-[hsl(45_100%_55%)] text-base font-medium" data-testid="ac-pay-remaining">{fmtTRY(Math.max(0, (payTarget.debt || 0) - (payTarget.paid_amount || 0)))}</span>
+                  <span className="font-data text-[hsl(45_100%_55%)] text-base font-medium" data-testid="ac-pay-remaining">
+                    {fmtTRY(Math.max(0, (payTarget.debt || 0) - (payTarget.paid_amount || 0)))}
+                    {payTarget.debt_usd ? <span className="text-xs text-muted-foreground ml-1">· ${Math.max(0, (payTarget.debt_usd || 0) - (payTarget.paid_amount_usd || 0)).toFixed(2)}</span> : null}
+                  </span>
+                </div>
+                {payTarget.exchange_rate ? (
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1">
+                    <span>Sabit Kur (kredi açılışında)</span>
+                    <span className="font-data">1 USD = {payTarget.exchange_rate.toFixed(2)} TRY</span>
+                  </div>
+                ) : null}
+              </div>
+              {/* Currency toggle */}
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">Ödeme Para Birimi</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPayForm({ ...payForm, paid_currency: "TRY" })}
+                    className={`h-9 rounded-sm border text-sm flex items-center justify-center gap-2 transition-colors ${
+                      payForm.paid_currency !== "USD"
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                    data-testid="ac-pay-cur-try"
+                  >
+                    ₺ TL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPayForm({ ...payForm, paid_currency: "USD" })}
+                    className={`h-9 rounded-sm border text-sm flex items-center justify-center gap-2 transition-colors ${
+                      payForm.paid_currency === "USD"
+                        ? "border-[hsl(144_100%_55%)] bg-[hsl(144_100%_55%_/_0.08)] text-[hsl(144_100%_65%)]"
+                        : "border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                    data-testid="ac-pay-cur-usd"
+                  >
+                    $ USD
+                  </button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Ödenen Tutar (₺)">
+                <Field label={`Ödenen Tutar (${payForm.paid_currency === "USD" ? "$" : "₺"})`}>
                   <Input type="number" step="0.01" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ac-pay-amount" autoFocus />
+                  {payForm.amount && payTarget.exchange_rate ? (
+                    <div className="text-[10px] text-muted-foreground mt-1 font-data">
+                      {payForm.paid_currency === "USD"
+                        ? `≈ ${fmtTRY(parseFloat(payForm.amount) * payTarget.exchange_rate)}`
+                        : `≈ $${(parseFloat(payForm.amount) / payTarget.exchange_rate).toFixed(2)}`}
+                    </div>
+                  ) : null}
                 </Field>
                 <Field label="Ödeme Tarihi">
                   <Input type="date" value={payForm.date} onChange={(e) => setPayForm({ ...payForm, date: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm font-data" data-testid="ac-pay-date" />

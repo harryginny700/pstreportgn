@@ -229,11 +229,16 @@ class SiteCredit(BaseModel):
     amount: float  # verilen kredi miktarı (TL)
     commission_pct: float  # yüzde (örn. 5.0 = %5)
     debt: float  # hesaplanmış borç = amount * commission_pct / 100
-    paid_amount: float = 0.0  # kümülatif ödenen miktar
-    payments: List[dict] = Field(default_factory=list)  # [{amount, date, paid_at, paid_by_email, note?}]
+    paid_amount: float = 0.0  # kümülatif ödenen miktar (TL)
+    payments: List[dict] = Field(default_factory=list)  # [{amount, date, paid_at, paid_by_email, note?, amount_usd?, exchange_rate?, paid_currency?}]
     note: Optional[str] = None
     status: str = "unpaid"  # "unpaid" | "partial" | "paid"
     archived: bool = False
+    # USD carry-over (locked at creation)
+    exchange_rate: Optional[float] = None  # TL/USD rate at creation
+    amount_usd: Optional[float] = None     # verilen kredi USD karşılığı (creation rate)
+    debt_usd: Optional[float] = None       # borç USD karşılığı
+    paid_amount_usd: float = 0.0           # kümülatif ödenen USD karşılığı
     date: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
     paid_at: Optional[str] = None  # borç tamamen ödendiği zaman
     paid_by_email: Optional[str] = None
@@ -327,6 +332,7 @@ class SetupInput(BaseModel):
     setup_fee: float = 0.0  # Playspintech admin kazancı (0 ise atlanır)
     setup_fee_partner_name: Optional[str] = None  # setup_fee>0 ise zorunlu
     note: Optional[str] = None
+    exchange_rate: Optional[float] = None
 
 
 class TelegramConfigInput(BaseModel):
@@ -357,6 +363,7 @@ class AdminPaymentInput(BaseModel):
     partner_name: str  # required — Ödeme hangi ortak kasadan düşülecek
     category: Optional[str] = None
     note: Optional[str] = None
+    exchange_rate: Optional[float] = None
 
 
 class TransactionInput(BaseModel):
@@ -414,13 +421,16 @@ class SiteCreditInput(BaseModel):
     commission_pct: float
     note: Optional[str] = None
     date: Optional[str] = None
+    exchange_rate: Optional[float] = None  # TL/USD; if omitted uses admin_settings.usd_rate
 
 
 class SiteCreditPaymentInput(BaseModel):
-    amount: float
+    amount: float  # in the chosen currency (TL veya USD)
     date: Optional[str] = None
     note: Optional[str] = None
-    splits: Optional[List[dict]] = None  # [{kasa: str, amount: float}]
+    splits: Optional[List[dict]] = None  # [{kasa: str, amount: float}] — amounts in TRY
+    paid_currency: Optional[Literal["TRY", "USD"]] = "TRY"
+    exchange_rate: Optional[float] = None
 
 
 class DebtorInput(BaseModel):
@@ -751,11 +761,18 @@ async def create_site_credit(inp: SiteCreditInput, user: dict = Depends(require_
     if inp.commission_pct < 0:
         raise HTTPException(400, "Yüzde 0'dan küçük olamaz")
     debt = round(inp.amount * inp.commission_pct / 100.0, 2)
+    # USD carry-over
+    rate = float(inp.exchange_rate) if (inp.exchange_rate and inp.exchange_rate > 0) else await _get_current_usd_rate()
+    amount_usd = round(inp.amount / rate, 2)
+    debt_usd = round(debt / rate, 2)
     obj = SiteCredit(
         site_id=inp.site_id,
         amount=inp.amount,
         commission_pct=inp.commission_pct,
         debt=debt,
+        exchange_rate=rate,
+        amount_usd=amount_usd,
+        debt_usd=debt_usd,
         note=inp.note,
         date=inp.date or datetime.now(timezone.utc).date().isoformat(),
         created_by_email=user["email"],
@@ -763,14 +780,16 @@ async def create_site_credit(inp: SiteCreditInput, user: dict = Depends(require_
     await db.site_credits.insert_one(obj.model_dump())
     await log_audit(user, "site_credit.create", "site_credit", obj.id,
                     target_name=site["name"], site_id=inp.site_id,
-                    details={"amount": inp.amount, "pct": inp.commission_pct, "debt": debt})
+                    details={"amount": inp.amount, "pct": inp.commission_pct, "debt": debt,
+                             "exchange_rate": rate, "amount_usd": amount_usd, "debt_usd": debt_usd})
     # Fire-and-forget Telegram notifications (site-scoped + admin-global)
     await _telegram_send_safe(site, _fmt_credit_created_message(site["name"], obj.model_dump()))
     admin_msg = (
         "*Playspintech — Yeni Kredi Açıldı*\n"
         f"_Site:_ *{site['name']}*\n"
-        f"_Kredi:_ ₺{_amt(float(inp.amount))}"
-        + (f" · Komisyon: %{inp.commission_pct:g} (Borç: ₺{_amt(debt)})" if inp.commission_pct else "")
+        f"_Kredi:_ ₺{_amt(float(inp.amount))} (≈ ${_amt(amount_usd)})"
+        + (f" · Komisyon: %{inp.commission_pct:g} (Borç: ₺{_amt(debt)} ≈ ${_amt(debt_usd)})" if inp.commission_pct else "")
+        + f"\n_Kur:_ `1 USD = {_amt(rate)} TRY`"
     )
     if inp.note:
         admin_msg += f"\n_Not:_ {inp.note}"
@@ -816,12 +835,35 @@ async def add_site_credit_payment(cid: str, inp: SiteCreditPaymentInput, user: d
 
     debt = float(existing.get("debt", 0))
     prev_paid = float(existing.get("paid_amount", 0))
-    new_paid = round(prev_paid + inp.amount, 2)
+
+    # Determine currency + rate
+    paid_currency = (inp.paid_currency or "TRY").upper()
+    if paid_currency not in ("TRY", "USD"):
+        paid_currency = "TRY"
+    # Use debt's locked exchange_rate for USD→TRY conversion (so USD debt is fixed).
+    credit_rate = float(existing.get("exchange_rate") or 0.0)
+    if credit_rate <= 0:
+        credit_rate = await _get_current_usd_rate()  # legacy credits without exchange_rate
+    payment_rate = float(inp.exchange_rate) if (inp.exchange_rate and inp.exchange_rate > 0) else credit_rate
+
+    if paid_currency == "USD":
+        amount_usd_paid = round(inp.amount, 2)
+        # Convert to TRY using the DEBT's locked rate so USD-denominated debt is respected
+        amount_try_paid = round(amount_usd_paid * credit_rate, 2)
+    else:
+        amount_try_paid = round(inp.amount, 2)
+        # For USD side, use payment-time rate (informational)
+        amount_usd_paid = round(amount_try_paid / payment_rate, 2) if payment_rate > 0 else 0.0
+
+    new_paid = round(prev_paid + amount_try_paid, 2)
     if new_paid > debt + 0.01:
         raise HTTPException(400, f"Ödeme miktarı kalan borçtan fazla olamaz. Kalan borç: {round(debt - prev_paid, 2)} ₺")
 
     payment = {
-        "amount": round(inp.amount, 2),
+        "amount": amount_try_paid,  # keeps TRY as the primary
+        "amount_usd": amount_usd_paid,
+        "exchange_rate": payment_rate,
+        "paid_currency": paid_currency,
         "date": inp.date or datetime.now(timezone.utc).date().isoformat(),
         "paid_at": datetime.now(timezone.utc).isoformat(),
         "paid_by_email": user["email"],
@@ -829,10 +871,10 @@ async def add_site_credit_payment(cid: str, inp: SiteCreditPaymentInput, user: d
     }
 
     # Partner kasa splits (manual distribution). Default: full amount → Playspintech.
-    splits = inp.splits or [{"kasa": "Playspintech", "amount": inp.amount}]
+    splits = inp.splits or [{"kasa": "Playspintech", "amount": amount_try_paid}]
     total_split = round(sum(float(s.get("amount", 0)) for s in splits), 2)
-    if abs(total_split - round(inp.amount, 2)) > 0.01:
-        raise HTTPException(400, f"Dağılım toplamı ödeme tutarına eşit olmalı ({total_split} ≠ {inp.amount})")
+    if abs(total_split - amount_try_paid) > 0.01:
+        raise HTTPException(400, f"Dağılım toplamı ödeme tutarına eşit olmalı ({total_split} ≠ {amount_try_paid})")
     for s in splits:
         if s.get("kasa") not in PARTNER_KASAS:
             raise HTTPException(400, f"Geçersiz kasa: {s.get('kasa')}. Geçerli: {PARTNER_KASAS}")
@@ -841,8 +883,11 @@ async def add_site_credit_payment(cid: str, inp: SiteCreditPaymentInput, user: d
     payment["splits"] = [{"kasa": s["kasa"], "amount": round(float(s["amount"]), 2)} for s in splits if float(s.get("amount", 0)) > 0]
 
     new_status = "paid" if new_paid >= debt - 0.01 else "partial"
+    prev_paid_usd = float(existing.get("paid_amount_usd", 0) or 0)
+    new_paid_usd = round(prev_paid_usd + amount_usd_paid, 2)
     updates: dict = {
         "paid_amount": new_paid,
+        "paid_amount_usd": new_paid_usd,
         "status": new_status,
     }
     if new_status == "paid":
@@ -875,10 +920,13 @@ async def add_site_credit_payment(cid: str, inp: SiteCreditPaymentInput, user: d
     # Fire-and-forget Telegram notifications (site + admin-global)
     await _telegram_send_safe(site, _fmt_credit_payment_message(doc["site_name"], doc, payment["amount"], payment["date"]))
     splits_txt = ", ".join([f"{s['kasa']} ₺{_amt(float(s['amount']))}" for s in payment["splits"]]) if payment.get("splits") else "—"
+    cur_label = "USD" if paid_currency == "USD" else "TRY"
+    orig_amt_display = f"${_amt(amount_usd_paid)}" if paid_currency == "USD" else f"₺{_amt(amount_try_paid)}"
     admin_msg = (
         "*Playspintech — Kredi Ödemesi Alındı*\n"
         f"_Site:_ *{doc['site_name']}*\n"
-        f"_Ödeme:_ ₺{_amt(float(payment['amount']))} · _Tarih:_ `{payment['date']}`\n"
+        f"_Ödeme:_ {orig_amt_display} _({cur_label})_ · _Tarih:_ `{payment['date']}`\n"
+        f"_TL Karşılığı:_ ₺{_amt(amount_try_paid)} · _USD Karşılığı:_ ${_amt(amount_usd_paid)}\n"
         f"_Kalan Borç:_ ₺{_amt(float(doc.get('debt', 0)) - float(doc.get('paid_amount', 0)))} · _Durum:_ `{new_status}`\n"
         f"_Dağıtım:_ {splits_txt}"
     )
@@ -1295,6 +1343,20 @@ def _amt(n: float) -> str:
         return str(n)
 
 
+DEFAULT_USD_RATE = 30.0
+
+
+async def _get_current_usd_rate() -> float:
+    """Return the global USD/TRY exchange rate from admin_settings. Falls back to DEFAULT_USD_RATE."""
+    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0, "usd_rate": 1})
+    r = (doc or {}).get("usd_rate")
+    try:
+        r = float(r) if r is not None else DEFAULT_USD_RATE
+        return r if r > 0 else DEFAULT_USD_RATE
+    except Exception:
+        return DEFAULT_USD_RATE
+
+
 async def _partner_kasa_balance(kasa: str) -> float:
     """Sum of all partner_kasa_movements amount for a given kasa."""
     balance = 0.0
@@ -1353,11 +1415,15 @@ async def create_admin_payment(inp: AdminPaymentInput, user: dict = Depends(requ
     if inp.partner_name not in PARTNER_KASAS:
         raise HTTPException(400, f"Geçersiz ortak kasa. Geçerli: {PARTNER_KASAS}")
     pid = uid()
+    rate = float(inp.exchange_rate) if (inp.exchange_rate and inp.exchange_rate > 0) else await _get_current_usd_rate()
+    amount_usd = round(float(inp.amount) / rate, 2) if rate > 0 else 0.0
     doc = {
         "id": pid,
         "date": inp.date,
         "description": inp.description.strip(),
         "amount": float(inp.amount),
+        "amount_usd": amount_usd,
+        "exchange_rate": rate,
         "partner_name": inp.partner_name,
         "category": (inp.category or "").strip() or None,
         "note": (inp.note or "").strip() or None,
@@ -1566,6 +1632,36 @@ async def delete_admin_payment(pid: str, user: dict = Depends(require_admin)):
     await log_audit(user, "admin_payment.delete", "admin_payment", pid,
                     details={"amount": existing.get("amount"), "description": existing.get("description")})
     return {"ok": True}
+
+
+@api_router.get("/admin/settings/usd-rate")
+async def get_admin_usd_rate(user: dict = Depends(require_admin)):
+    rate = await _get_current_usd_rate()
+    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0, "usd_rate_updated_at": 1, "usd_rate": 1}) or {}
+    return {
+        "usd_rate": rate,
+        "updated_at": doc.get("usd_rate_updated_at"),
+    }
+
+
+class UsdRateInput(BaseModel):
+    usd_rate: float
+
+
+@api_router.put("/admin/settings/usd-rate")
+async def set_admin_usd_rate(inp: UsdRateInput, user: dict = Depends(require_admin)):
+    if inp.usd_rate <= 0:
+        raise HTTPException(400, "Kur 0'dan büyük olmalı")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.admin_settings.update_one(
+        {"id": "global"},
+        {"$set": {"usd_rate": float(inp.usd_rate), "usd_rate_updated_at": now},
+         "$setOnInsert": {"id": "global", "created_at": now}},
+        upsert=True,
+    )
+    await log_audit(user, "admin.usd_rate", "admin_settings", "global",
+                    details={"usd_rate": float(inp.usd_rate)})
+    return {"usd_rate": float(inp.usd_rate), "updated_at": now}
 
 
 # ============== ADMIN: NOTIFICATIONS (Central Bot Settings) ==============
