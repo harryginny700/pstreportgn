@@ -43,12 +43,17 @@ export default function AdminPayments() {
   const [tgCfgOpen, setTgCfgOpen] = useState(false);
   const [tgCfg, setTgCfg] = useState({ telegram_bot_token: "", telegram_chat_id: "", configured: false });
   const [tgSaving, setTgSaving] = useState(false);
+  const [usdRate, setUsdRate] = useState(30);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get("/admin/payments", { params: { date_from: dateFrom, date_to: dateTo } });
+      const [r, u] = await Promise.all([
+        api.get("/admin/payments", { params: { date_from: dateFrom, date_to: dateTo } }),
+        api.get("/admin/settings/usd-rate").catch(() => ({ data: { usd_rate: 30 } })),
+      ]);
       setData(r.data || { items: [], total: 0, count: 0 });
+      setUsdRate(u.data?.usd_rate || 30);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Yüklenemedi");
     } finally {
@@ -410,6 +415,9 @@ export default function AdminPayments() {
                   className="bg-transparent border-border rounded-sm h-9 font-data text-right"
                   data-testid="ap-form-amount"
                 />
+                {form.amount && usdRate > 0 ? (
+                  <div className="text-[10px] text-muted-foreground mt-1 font-data text-right">≈ ${((parseFloat(form.amount) || 0) / usdRate).toFixed(2)}</div>
+                ) : null}
               </div>
               <div>
                 <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">

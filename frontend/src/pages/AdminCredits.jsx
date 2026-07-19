@@ -29,6 +29,7 @@ export default function AdminCredits() {
   const [payForm, setPayForm] = useState({ amount: "", date: "", note: "", paid_currency: "TRY" });
   const [paying, setPaying] = useState(false);
   const [reminding, setReminding] = useState(false);
+  const [usdRate, setUsdRate] = useState(30);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -37,12 +38,14 @@ export default function AdminCredits() {
       if (filterSite !== "all") params.site_id = filterSite;
       if (filterStatus !== "all") params.status = filterStatus;
       if (viewArchived) params.archived = true;
-      const [s, r] = await Promise.all([
+      const [s, r, u] = await Promise.all([
         api.get("/admin/sites"),
         api.get("/admin/site-credits", { params }),
+        api.get("/admin/settings/usd-rate").catch(() => ({ data: { usd_rate: 30 } })),
       ]);
       setSites(s.data || []);
       setRows(r.data || []);
+      setUsdRate(u.data?.usd_rate || 30);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Yüklenemedi");
     } finally {
@@ -365,12 +368,18 @@ export default function AdminCredits() {
               <TableRow key={r.id} className="border-border" data-testid={`ac-row-${r.id}`}>
                 <TableCell className="font-data text-xs text-foreground">{r.date}</TableCell>
                 <TableCell className="text-sm text-foreground">{r.site_name}</TableCell>
-                <TableCell className="text-right font-data text-sm text-foreground">{fmtTRY(r.amount)}</TableCell>
+                <TableCell className="text-right font-data text-sm text-foreground">
+                  {fmtTRY(r.amount)}
+                  {r.amount_usd ? <div className="text-[10px] text-muted-foreground">${r.amount_usd.toFixed(2)}</div> : null}
+                </TableCell>
                 <TableCell className="text-right font-data text-xs text-muted-foreground">%{r.commission_pct}</TableCell>
-                <TableCell className="text-right font-data text-sm text-foreground">{fmtTRY(r.debt)}</TableCell>
+                <TableCell className="text-right font-data text-sm text-foreground">
+                  {fmtTRY(r.debt)}
+                  {r.debt_usd ? <div className="text-[10px] text-muted-foreground">${r.debt_usd.toFixed(2)}</div> : null}
+                </TableCell>
                 <TableCell className="text-right font-data text-xs">
-                  <div className="text-[hsl(144_100%_55%)]">{fmtTRY(paidAmt)}</div>
-                  <div className={isPaid ? "text-muted-foreground" : "text-[hsl(45_100%_55%)] font-medium"}>{fmtTRY(remaining)}</div>
+                  <div className="text-[hsl(144_100%_55%)]">{fmtTRY(paidAmt)}{r.paid_amount_usd ? <span className="text-muted-foreground ml-1">· ${r.paid_amount_usd.toFixed(2)}</span> : null}</div>
+                  <div className={isPaid ? "text-muted-foreground" : "text-[hsl(45_100%_55%)] font-medium"}>{fmtTRY(remaining)}{r.debt_usd ? <span className="text-muted-foreground ml-1">· ${Math.max(0, (r.debt_usd || 0) - (r.paid_amount_usd || 0)).toFixed(2)}</span> : null}</div>
                 </TableCell>
                 <TableCell>
                   {isPaid ? (
@@ -437,14 +446,22 @@ export default function AdminCredits() {
             <div className="grid grid-cols-2 gap-3">
               <Field label="Kredi Miktarı (₺)">
                 <Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ac-form-amount" />
+                {form.amount && usdRate > 0 ? (
+                  <div className="text-[10px] text-muted-foreground mt-1 font-data">≈ ${((parseFloat(form.amount) || 0) / usdRate).toFixed(2)}</div>
+                ) : null}
               </Field>
               <Field label="Yüzde (%)">
                 <Input type="number" step="0.01" value={form.commission_pct} onChange={(e) => setForm({ ...form, commission_pct: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ac-form-pct" />
               </Field>
             </div>
             <div className="border border-border rounded-sm bg-background p-3 flex items-center justify-between">
-              <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Hesaplanan Borç</div>
-              <div className="font-data text-lg text-primary" data-testid="ac-form-debt-preview">{fmtTRY(previewDebt)}</div>
+              <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Hesaplanan Borç <span className="text-muted-foreground/60">· Kur: {usdRate.toFixed(2)}</span></div>
+              <div className="text-right" data-testid="ac-form-debt-preview">
+                <div className="font-data text-lg text-primary">{fmtTRY(previewDebt)}</div>
+                {usdRate > 0 && previewDebt > 0 ? (
+                  <div className="text-[10px] text-muted-foreground font-data">≈ ${(previewDebt / usdRate).toFixed(2)}</div>
+                ) : null}
+              </div>
             </div>
             <Field label="Not (opsiyonel)">
               <Input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="bg-transparent border-border rounded-sm h-9 text-sm" data-testid="ac-form-note" />
@@ -648,6 +665,9 @@ export default function AdminCredits() {
                   className="bg-transparent border-border rounded-sm h-9 text-sm font-data"
                   data-testid="ac-setup-amount"
                 />
+                {setupForm.amount && usdRate > 0 ? (
+                  <div className="text-[10px] text-muted-foreground mt-1 font-data">≈ ${((parseFloat(setupForm.amount) || 0) / usdRate).toFixed(2)}</div>
+                ) : null}
               </Field>
               <Field label="Komisyon (%)">
                 <Input
@@ -671,6 +691,9 @@ export default function AdminCredits() {
                   className="bg-transparent border-border rounded-sm h-9 text-sm font-data"
                   data-testid="ac-setup-fee"
                 />
+                {setupForm.setup_fee && usdRate > 0 ? (
+                  <div className="text-[10px] text-muted-foreground mt-1 font-data">≈ ${((parseFloat(setupForm.setup_fee) || 0) / usdRate).toFixed(2)}</div>
+                ) : null}
               </Field>
               <Field label="Gelir Girecek Kasa">
                 <Select

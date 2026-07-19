@@ -1087,6 +1087,7 @@ async def site_credits_summary(user: dict = Depends(require_admin)):
             "total_credit": 0.0, "total_debt": 0.0, "total_paid": 0.0,
             "total_remaining": 0.0, "unpaid_count": 0, "paid_count": 0, "partial_count": 0,
             "credit_count": 0,
+            "total_credit_usd": 0.0, "total_debt_usd": 0.0, "total_paid_usd": 0.0, "total_remaining_usd": 0.0,
         })
         debt = float(c.get("debt", 0))
         paid = float(c.get("paid_amount") or (debt if c.get("status") == "paid" else 0))
@@ -1095,6 +1096,14 @@ async def site_credits_summary(user: dict = Depends(require_admin)):
         agg["total_paid"] += paid
         agg["total_remaining"] += max(0.0, debt - paid)
         agg["credit_count"] += 1
+        # USD carry-over (only for credits that have exchange_rate stored)
+        debt_usd = float(c.get("debt_usd") or 0)
+        amount_usd = float(c.get("amount_usd") or 0)
+        paid_usd = float(c.get("paid_amount_usd") or 0)
+        agg["total_credit_usd"] += amount_usd
+        agg["total_debt_usd"] += debt_usd
+        agg["total_paid_usd"] += paid_usd
+        agg["total_remaining_usd"] += max(0.0, debt_usd - paid_usd)
         if c.get("status") == "paid":
             agg["paid_count"] += 1
         elif c.get("status") == "partial":
@@ -1102,7 +1111,8 @@ async def site_credits_summary(user: dict = Depends(require_admin)):
         else:
             agg["unpaid_count"] += 1
     for row in per_site.values():
-        for k in ("total_credit", "total_debt", "total_paid", "total_remaining"):
+        for k in ("total_credit", "total_debt", "total_paid", "total_remaining",
+                  "total_credit_usd", "total_debt_usd", "total_paid_usd", "total_remaining_usd"):
             row[k] = round(row[k], 2)
     return sorted(per_site.values(), key=lambda r: r["total_remaining"], reverse=True)
 

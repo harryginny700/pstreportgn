@@ -46,10 +46,10 @@ export default function AdminSiteCreditsSummary() {
     <div className="space-y-6" data-testid="admin-site-credits-summary-page">
       {/* Totals */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Card icon={HandCoins} label="Toplam Verilen Kredi" value={fmtTRY(totals.credit)} />
-        <Card icon={Landmark} label="Toplam Oluşan Borç" value={fmtTRY(totals.debt)} />
-        <Card icon={Check} label="Toplam Alınan Ödeme" value={fmtTRY(totals.paid)} tone="success" />
-        <Card icon={AlertCircle} label="Toplam Bekleyen" value={fmtTRY(totals.remaining)} tone={totals.remaining > 0 ? "warning" : "muted"} testid="scs-total-remaining" />
+        <Card icon={HandCoins} label="Toplam Verilen Kredi" value={fmtTRY(totals.credit)} subValue={totals.credit_usd ? `$${totals.credit_usd.toFixed(2)}` : null} />
+        <Card icon={Landmark} label="Toplam Oluşan Borç" value={fmtTRY(totals.debt)} subValue={totals.debt_usd ? `$${totals.debt_usd.toFixed(2)}` : null} />
+        <Card icon={Check} label="Toplam Alınan Ödeme" value={fmtTRY(totals.paid)} subValue={totals.paid_usd ? `$${totals.paid_usd.toFixed(2)}` : null} tone="success" />
+        <Card icon={AlertCircle} label="Toplam Bekleyen" value={fmtTRY(totals.remaining)} subValue={totals.remaining_usd ? `$${totals.remaining_usd.toFixed(2)}` : null} tone={totals.remaining > 0 ? "warning" : "muted"} testid="scs-total-remaining" />
       </div>
 
       {/* Send-to-Telegram action */}
@@ -95,10 +95,22 @@ export default function AdminSiteCreditsSummary() {
               <TableRow key={r.site_id} className="border-border" data-testid={`scs-row-${r.site_id}`}>
                 <TableCell className="text-sm text-foreground font-medium">{r.site_name}</TableCell>
                 <TableCell className="text-right font-data text-xs text-muted-foreground">{r.credit_count}</TableCell>
-                <TableCell className="text-right font-data text-sm text-foreground">{fmtTRY(r.total_credit)}</TableCell>
-                <TableCell className="text-right font-data text-sm text-foreground">{fmtTRY(r.total_debt)}</TableCell>
-                <TableCell className="text-right font-data text-sm text-[hsl(144_100%_55%)]">{fmtTRY(r.total_paid)}</TableCell>
-                <TableCell className={`text-right font-data text-sm font-medium ${r.total_remaining > 0 ? "text-[hsl(45_100%_55%)]" : "text-muted-foreground"}`}>{fmtTRY(r.total_remaining)}</TableCell>
+                <TableCell className="text-right font-data text-sm text-foreground">
+                  {fmtTRY(r.total_credit)}
+                  {r.total_credit_usd ? <div className="text-[10px] text-muted-foreground">${r.total_credit_usd.toFixed(2)}</div> : null}
+                </TableCell>
+                <TableCell className="text-right font-data text-sm text-foreground">
+                  {fmtTRY(r.total_debt)}
+                  {r.total_debt_usd ? <div className="text-[10px] text-muted-foreground">${r.total_debt_usd.toFixed(2)}</div> : null}
+                </TableCell>
+                <TableCell className="text-right font-data text-sm text-[hsl(144_100%_55%)]">
+                  {fmtTRY(r.total_paid)}
+                  {r.total_paid_usd ? <div className="text-[10px] text-muted-foreground">${r.total_paid_usd.toFixed(2)}</div> : null}
+                </TableCell>
+                <TableCell className={`text-right font-data text-sm font-medium ${r.total_remaining > 0 ? "text-[hsl(45_100%_55%)]" : "text-muted-foreground"}`}>
+                  {fmtTRY(r.total_remaining)}
+                  {r.total_remaining_usd ? <div className="text-[10px] text-muted-foreground font-normal">${r.total_remaining_usd.toFixed(2)}</div> : null}
+                </TableCell>
                 <TableCell className="text-center text-xs font-data">
                   <span className="text-[hsl(45_100%_55%)]">{r.unpaid_count}</span>
                   <span className="text-muted-foreground"> / </span>
@@ -115,7 +127,7 @@ export default function AdminSiteCreditsSummary() {
   );
 }
 
-function Card({ icon: Icon, label, value, tone, testid }) {
+function Card({ icon: Icon, label, value, subValue, tone, testid }) {
   const toneCls = tone === "warning" ? "text-[hsl(45_100%_55%)]"
     : tone === "success" ? "text-[hsl(144_100%_55%)]"
     : tone === "muted" ? "text-muted-foreground"
@@ -127,6 +139,7 @@ function Card({ icon: Icon, label, value, tone, testid }) {
         <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">{label}</div>
       </div>
       <div className={`font-data text-xl ${toneCls}`}>{value}</div>
+      {subValue ? <div className="text-[10px] text-muted-foreground font-data mt-0.5">{subValue}</div> : null}
     </div>
   );
 }
