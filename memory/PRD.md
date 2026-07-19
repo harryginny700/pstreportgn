@@ -91,6 +91,19 @@ Turkish iGaming operator finance dashboard. Playspintech = provider (parent bran
   - **Test (curl doğrulaması)**: `10000 TL @ 45% komisyon` → borç `4500 TL = 100 USD (rate 45)`. `100 USD ödeme` → `paid_amount=4500 TL, paid_amount_usd=100, status='paid'` ✅ (Kullanıcı örneği tam uygulandı).
   - **Legacy note**: Eski `site_credits` kayıtları için USD alanları null (yeni açılanlarda otomatik). Eski krediye USD ödeme yapmak istersen backend fallback current_rate kullanır.
 
+### v2.7 - Admin Ayarlar Sayfası + Otomatik USD/TRY Kuru (2026-02-19)
+- **Yeni sayfa** `/admin/ayarlar` (AdminSettings): tabbed layout with 2 sekme — `USD / TRY Kuru` ve `Telegram Botu`.
+- **Sidebar**: eski `Telegram Botu` linki kaldırıldı; yerine `Ayarlar` (nav-admin-settings) linki eklendi. Legacy `/admin/bot` → `/admin/ayarlar?tab=bot` yönlendirmesi (Navigate replace).
+- **Otomatik canlı USD/TRY**: `open.er-api.com` (birincil) + `frankfurter.app` (yedek) ile background asyncio loop her saat başı `admin_settings.usd_rate` günceller. Startup'ta 10sn sonra ilk fetch.
+- **Yeni endpointler**:
+  - `GET /api/admin/settings/usd-rate` → `{usd_rate, updated_at, mode, source, last_fetch_at, fetch_error}`
+  - `PUT /api/admin/settings/usd-rate` → body `{usd_rate?, mode?}`. Manuel değer gönderildiğinde otomatik `mode="manual"` olur. `{mode:"auto"}` gönderilince canlı kur hemen çekilir.
+  - `POST /api/admin/settings/usd-rate/refresh` → force live fetch (returns updated snapshot).
+  - `GET /api/settings/usd-rate/public` → topbar widget için authenticated hafif endpoint (admin + site user).
+- **Topbar widget**: Theme toggle butonunun **yanına** `data-testid="usd-rate-widget"` yeşil dollar ikon + anlık kur (`47.17 ₺`) eklendi. 15 dakikada bir client-side refresh.
+- **UI**: hero card (canlı kur + kaynak + son güncelleme) + auto/manual switch + manual input. Canlı Kur Çek butonu ile anlık zorla güncelleme.
+- **Test coverage**: `/app/backend/tests/test_admin_usd_rate.py` (10 pytest cases, %100 pass). Frontend testing agent tüm 8 senaryo pass.
+
 ## Backlog (P1/P2)
 - P1: Password change / forgot password flow
 - P1: Editable admin overview site cards (rename inline)
