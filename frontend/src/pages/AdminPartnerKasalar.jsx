@@ -10,6 +10,13 @@ import { Wallet, MinusCircle, Loader2, TrendingUp, TrendingDown, ExternalLink, S
 
 const PARTNERS = ["Playspintech", "Harry", "Bozo", "Memo"];
 
+function fmtUSD(n) {
+  if (n === null || n === undefined || isNaN(n)) return "$0.00";
+  const abs = Math.abs(n);
+  const s = abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${n < 0 ? "-" : ""}$${s}`;
+}
+
 export default function AdminPartnerKasalar() {
   const [kasalar, setKasalar] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -20,12 +27,17 @@ export default function AdminPartnerKasalar() {
   const [wdForm, setWdForm] = useState({ amount: "", date: "", note: "" });
   const [wdBusy, setWdBusy] = useState(false);
   const [sending, setSending] = useState(false);
+  const [usdRate, setUsdRate] = useState(null); // {usd_rate, source, updated_at}
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get("/admin/partner-kasalar");
+      const [r, u] = await Promise.all([
+        api.get("/admin/partner-kasalar"),
+        api.get("/settings/usd-rate/public").catch(() => ({ data: null })),
+      ]);
       setKasalar(r.data || []);
+      if (u.data?.usd_rate) setUsdRate(u.data);
     } catch (e) {
       toast.error("Yüklenemedi");
     } finally {
@@ -101,6 +113,12 @@ export default function AdminPartnerKasalar() {
           <div className={`font-data text-4xl font-light tracking-tight ${totalBalance >= 0 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} data-testid="pk-total-balance">
             {fmtTRY(totalBalance)}
           </div>
+          {usdRate?.usd_rate ? (
+            <div className="mt-1 font-data text-sm text-muted-foreground" data-testid="pk-total-balance-usd">
+              ≈ {fmtUSD(totalBalance / usdRate.usd_rate)}
+              <span className="ml-2 text-[10px] uppercase tracking-widest">(1 USD = {usdRate.usd_rate.toFixed(2)}₺)</span>
+            </div>
+          ) : null}
         </div>
         <Button
           onClick={sendSummary}
@@ -129,6 +147,11 @@ export default function AdminPartnerKasalar() {
               </div>
             </div>
             <div className={`font-data text-2xl ${k.balance >= 0 ? "text-[hsl(144_100%_55%)]" : "text-[hsl(345_100%_65%)]"}`} data-testid={`pk-balance-${k.name}`}>{fmtTRY(k.balance)}</div>
+            {usdRate?.usd_rate ? (
+              <div className="font-data text-xs text-muted-foreground -mt-2" data-testid={`pk-balance-usd-${k.name}`}>
+                ≈ {fmtUSD(k.balance / usdRate.usd_rate)}
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-2 text-xs font-data">
               <div className="border border-border rounded-sm p-2">
                 <div className="text-[9px] uppercase tracking-widest text-muted-foreground flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Giriş</div>
