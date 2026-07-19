@@ -1355,6 +1355,15 @@ def _amt(n: float) -> str:
 
 DEFAULT_USD_RATE = 30.0
 
+# Free public FX APIs (no key). Tried in order until one succeeds.
+USD_RATE_SOURCES = [
+    # (name, url, extractor(json) -> float)
+    ("frankfurter", "https://api.frankfurter.app/latest?from=USD&to=TRY",
+     lambda j: float((j.get("rates") or {}).get("TRY"))),
+    ("open.er-api", "https://open.er-api.com/v6/latest/USD",
+     lambda j: float((j.get("rates") or {}).get("TRY"))),
+]
+
 
 async def _get_current_usd_rate() -> float:
     """Return the global USD/TRY exchange rate from admin_settings. Falls back to DEFAULT_USD_RATE."""
@@ -1365,6 +1374,81 @@ async def _get_current_usd_rate() -> float:
         return r if r > 0 else DEFAULT_USD_RATE
     except Exception:
         return DEFAULT_USD_RATE
+
+
+async def _fetch_live_usd_rate() -> dict:
+    """Fetch live USD/TRY rate from public APIs. Returns dict {ok, rate, source, error}."""
+    import httpx
+    last_err = None
+    for name, url, extractor in USD_RATE_SOURCES:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(url)
+                r.raise_for_status()
+                rate = extractor(r.json())
+                if rate and rate > 0:
+                    return {"ok": True, "rate": float(rate), "source": name, "error": None}
+                last_err = f"{name}: invalid rate"
+        except Exception as e:
+            last_err = f"{name}: {e}"
+            continue
+    return {"ok": False, "rate": None, "source": None, "error": last_err or "no sources"}
+
+
+async def _refresh_usd_rate_if_auto(force: bool = False) -> dict:
+    """Fetch live rate and persist only if auto mode is enabled (or force=True).
+    Returns the current admin_settings usd_rate doc snapshot."""
+    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    # Default to auto if never set
+    mode = doc.get("usd_rate_mode") or "auto"
+    if mode != "auto" and not force:
+        return {"skipped": True, "reason": "manual_mode"}
+    fetched = await _fetch_live_usd_rate()
+    now = datetime.now(timezone.utc).isoformat()
+    if fetched["ok"]:
+        await db.admin_settings.update_one(
+            {"id": "global"},
+            {"$set": {
+                "usd_rate": fetched["rate"],
+                "usd_rate_updated_at": now,
+                "usd_rate_last_fetch_at": now,
+                "usd_rate_source": fetched["source"],
+                "usd_rate_fetch_error": None,
+             },
+             "$setOnInsert": {"id": "global", "created_at": now, "usd_rate_mode": "auto"}},
+            upsert=True,
+        )
+        logging.info(f"[usd_rate] Auto-fetched {fetched['rate']} from {fetched['source']}")
+        return {"ok": True, "rate": fetched["rate"], "source": fetched["source"], "updated_at": now}
+    else:
+        await db.admin_settings.update_one(
+            {"id": "global"},
+            {"$set": {
+                "usd_rate_last_fetch_at": now,
+                "usd_rate_fetch_error": fetched["error"],
+             },
+             "$setOnInsert": {"id": "global", "created_at": now, "usd_rate_mode": "auto"}},
+            upsert=True,
+        )
+        logging.warning(f"[usd_rate] Fetch failed: {fetched['error']}")
+        return {"ok": False, "error": fetched["error"]}
+
+
+async def _usd_rate_fetch_loop():
+    """Background task: hourly refresh of USD/TRY rate when auto mode enabled."""
+    # Initial fetch shortly after startup so first login sees fresh data
+    await asyncio.sleep(10)
+    while True:
+        try:
+            await _refresh_usd_rate_if_auto()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logging.error(f"[usd_rate] Loop error: {e}")
+        try:
+            await asyncio.sleep(3600)  # 1 hour
+        except asyncio.CancelledError:
+            raise
 
 
 async def _partner_kasa_balance(kasa: str) -> float:
@@ -1647,31 +1731,80 @@ async def delete_admin_payment(pid: str, user: dict = Depends(require_admin)):
 @api_router.get("/admin/settings/usd-rate")
 async def get_admin_usd_rate(user: dict = Depends(require_admin)):
     rate = await _get_current_usd_rate()
-    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0, "usd_rate_updated_at": 1, "usd_rate": 1}) or {}
+    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0}) or {}
     return {
         "usd_rate": rate,
         "updated_at": doc.get("usd_rate_updated_at"),
+        "mode": doc.get("usd_rate_mode") or "auto",
+        "source": doc.get("usd_rate_source"),
+        "last_fetch_at": doc.get("usd_rate_last_fetch_at"),
+        "fetch_error": doc.get("usd_rate_fetch_error"),
     }
 
 
 class UsdRateInput(BaseModel):
-    usd_rate: float
+    usd_rate: Optional[float] = None
+    mode: Optional[Literal["auto", "manual"]] = None
 
 
 @api_router.put("/admin/settings/usd-rate")
 async def set_admin_usd_rate(inp: UsdRateInput, user: dict = Depends(require_admin)):
-    if inp.usd_rate <= 0:
-        raise HTTPException(400, "Kur 0'dan büyük olmalı")
     now = datetime.now(timezone.utc).isoformat()
+    update: dict = {}
+    audit_details: dict = {}
+
+    if inp.mode is not None:
+        update["usd_rate_mode"] = inp.mode
+        audit_details["mode"] = inp.mode
+
+    if inp.usd_rate is not None:
+        if inp.usd_rate <= 0:
+            raise HTTPException(400, "Kur 0'dan büyük olmalı")
+        update["usd_rate"] = float(inp.usd_rate)
+        update["usd_rate_updated_at"] = now
+        update["usd_rate_source"] = "manual"
+        # Setting a value implies manual override unless mode explicitly set to auto
+        if inp.mode is None:
+            update["usd_rate_mode"] = "manual"
+        audit_details["usd_rate"] = float(inp.usd_rate)
+
+    if not update:
+        raise HTTPException(400, "Değişiklik yok")
+
     await db.admin_settings.update_one(
         {"id": "global"},
-        {"$set": {"usd_rate": float(inp.usd_rate), "usd_rate_updated_at": now},
-         "$setOnInsert": {"id": "global", "created_at": now}},
+        {"$set": update, "$setOnInsert": {"id": "global", "created_at": now}},
         upsert=True,
     )
-    await log_audit(user, "admin.usd_rate", "admin_settings", "global",
-                    details={"usd_rate": float(inp.usd_rate)})
-    return {"usd_rate": float(inp.usd_rate), "updated_at": now}
+    await log_audit(user, "admin.usd_rate", "admin_settings", "global", details=audit_details)
+
+    # If user just switched to auto, immediately fetch a fresh rate
+    if update.get("usd_rate_mode") == "auto" and inp.usd_rate is None:
+        await _refresh_usd_rate_if_auto(force=True)
+
+    return await get_admin_usd_rate(user)
+
+
+@api_router.post("/admin/settings/usd-rate/refresh")
+async def refresh_admin_usd_rate(user: dict = Depends(require_admin)):
+    """Force-fetch the live USD/TRY rate now (regardless of mode)."""
+    result = await _refresh_usd_rate_if_auto(force=True)
+    await log_audit(user, "admin.usd_rate.refresh", "admin_settings", "global", details=result)
+    if not result.get("ok"):
+        raise HTTPException(502, f"Kur çekilemedi: {result.get('error') or 'bilinmeyen hata'}")
+    return await get_admin_usd_rate(user)
+
+
+@api_router.get("/settings/usd-rate/public")
+async def get_public_usd_rate(user: dict = Depends(get_current_user)):
+    """Lightweight endpoint any authenticated user can call (used by topbar widget)."""
+    rate = await _get_current_usd_rate()
+    doc = await db.admin_settings.find_one({"id": "global"}, {"_id": 0, "usd_rate_updated_at": 1, "usd_rate_source": 1}) or {}
+    return {
+        "usd_rate": rate,
+        "updated_at": doc.get("usd_rate_updated_at"),
+        "source": doc.get("usd_rate_source"),
+    }
 
 
 # ============== ADMIN: NOTIFICATIONS (Central Bot Settings) ==============
@@ -3532,15 +3665,17 @@ async def _startup():
     # Start daily credit-reminder background task
     app.state.reminder_task = asyncio.create_task(_daily_reminder_loop())
     app.state.digest_task = asyncio.create_task(_admin_daily_digest_loop())
+    app.state.usd_rate_task = asyncio.create_task(_usd_rate_fetch_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    task = getattr(app.state, "reminder_task", None)
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    for attr in ("reminder_task", "digest_task", "usd_rate_task"):
+        task = getattr(app.state, attr, None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     client.close()

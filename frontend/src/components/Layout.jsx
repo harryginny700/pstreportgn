@@ -22,7 +22,8 @@ import {
   Archive,
   HandCoins,
   BarChart3,
-  Bot,
+  Settings,
+  DollarSign,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
@@ -51,7 +52,7 @@ const adminNav = [
   { to: "/admin/site-kredileri", icon: FileBarChart, labelKey: "nav.adminSiteCredits", testId: "nav-admin-site-credits" },
   { to: "/admin/odemeler", icon: Receipt, labelKey: "nav.adminPayments", testId: "nav-admin-payments" },
   { to: "/admin/rapor", icon: BarChart3, labelKey: "nav.adminReport", testId: "nav-admin-report" },
-  { to: "/admin/bot", icon: Bot, labelKey: "nav.adminBot", testId: "nav-admin-bot" },
+  { to: "/admin/ayarlar", icon: Settings, labelKey: "nav.adminSettings", testId: "nav-admin-settings" },
 ];
 
 export default function Layout() {
@@ -62,12 +63,27 @@ export default function Layout() {
   const { lang, t, toggle: toggleLang } = useI18n();
   const [sites, setSites] = useState([]);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [usdRate, setUsdRate] = useState(null); // {usd_rate, updated_at, source}
 
   useEffect(() => {
     if (isAdmin) {
       api.get("/admin/sites").then((r) => setSites(r.data)).catch(() => {});
     }
   }, [isAdmin]);
+
+  // Fetch USD/TRY rate for the topbar widget; refresh every 15 minutes
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const fetchRate = () => {
+      api.get("/settings/usd-rate/public")
+        .then((r) => { if (!cancelled) setUsdRate(r.data); })
+        .catch(() => {});
+    };
+    fetchRate();
+    const id = setInterval(fetchRate, 15 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [user]);
 
   // Close mobile drawer on route change
   useEffect(() => {
@@ -265,6 +281,19 @@ export default function Layout() {
               >
                 {theme === "dark" ? <Sun className="w-3.5 h-3.5 text-primary" /> : <Moon className="w-3.5 h-3.5 text-primary" />}
               </button>
+              {usdRate?.usd_rate ? (
+                <div
+                  className="hidden sm:flex items-center gap-1.5 h-8 px-2.5 rounded-sm border border-border bg-secondary/40"
+                  data-testid="usd-rate-widget"
+                  title={`Kaynak: ${usdRate.source || "—"} · Güncelleme: ${usdRate.updated_at ? new Date(usdRate.updated_at).toLocaleString(lang === "tr" ? "tr-TR" : "en-US") : "—"}`}
+                >
+                  <DollarSign className="w-3.5 h-3.5 text-[hsl(144_100%_55%)]" strokeWidth={2.5} />
+                  <span className="font-data text-[11px] text-foreground tracking-wide" data-testid="usd-rate-value">
+                    {Number(usdRate.usd_rate).toFixed(2)}
+                  </span>
+                  <span className="font-data text-[10px] text-muted-foreground">₺</span>
+                </div>
+              ) : null}
               <div className="hidden sm:flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-[hsl(144_100%_50%)]" />
                 <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground font-data">{t("topbar.connected")}</span>

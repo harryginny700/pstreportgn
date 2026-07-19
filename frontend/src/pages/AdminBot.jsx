@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Bot, Save, Send, PlugZap, Loader2, RefreshCw, Bell, CircleCheck, CircleX, MinusCircle, DollarSign } from "lucide-react";
+import { Bot, Save, Send, PlugZap, Loader2, RefreshCw, Bell, CircleCheck, CircleX, MinusCircle } from "lucide-react";
 
 const EVENT_LABELS = {
   partner_movement: {
@@ -52,9 +52,6 @@ export default function AdminBot() {
     configured: false,
     notification_prefs: Object.keys(EVENT_LABELS).reduce((a, k) => ({ ...a, [k]: true }), {}),
   });
-  const [usdRate, setUsdRate] = useState({ usd_rate: 30, updated_at: null });
-  const [usdRateInput, setUsdRateInput] = useState("");
-  const [usdSaving, setUsdSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -64,15 +61,12 @@ export default function AdminBot() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, l, u] = await Promise.all([
+      const [c, l] = await Promise.all([
         api.get("/admin/notifications/config"),
         api.get("/admin/notifications/logs", { params: { limit: 30 } }),
-        api.get("/admin/settings/usd-rate"),
       ]);
       setCfg(c.data);
       setLogs(l.data?.items || []);
-      setUsdRate(u.data);
-      setUsdRateInput(String(u.data.usd_rate || ""));
     } catch (e) {
       toast.error("Yüklenemedi");
     } finally {
@@ -81,21 +75,6 @@ export default function AdminBot() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  const saveUsdRate = async () => {
-    const val = parseFloat(usdRateInput);
-    if (isNaN(val) || val <= 0) return toast.error("Geçerli bir kur girin");
-    setUsdSaving(true);
-    try {
-      const r = await api.put("/admin/settings/usd-rate", { usd_rate: val });
-      setUsdRate(r.data);
-      toast.success(`USD/TRY kuru güncellendi: 1 USD = ${val} TRY`);
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Kur kaydedilemedi");
-    } finally {
-      setUsdSaving(false);
-    }
-  };
 
   const saveConfig = async () => {
     setSaving(true);
@@ -178,45 +157,6 @@ export default function AdminBot() {
         </div>
       ) : (
         <>
-          {/* USD/TRY Kuru */}
-          <div className="border border-border rounded-sm bg-card p-5">
-            <div className="text-sm font-medium text-foreground mb-1 flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-[hsl(144_100%_55%)]" /> USD / TRY Kuru
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">
-              Yeni kredi, kurulum ve ödeme formlarında bu kur otomatik uygulanır. Ödeme USD ile alındığında borç kredi açılışındaki sabit kur üzerinden hesaplanır.
-            </p>
-            <div className="flex items-end gap-2">
-              <div className="flex-1 max-w-[200px]">
-                <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5">
-                  1 USD = ? TRY
-                </label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={usdRateInput}
-                  onChange={(e) => setUsdRateInput(e.target.value)}
-                  className="bg-transparent border-border rounded-sm h-9 font-data text-sm"
-                  data-testid="ab-usd-rate-input"
-                  placeholder="45.00"
-                />
-              </div>
-              <Button
-                onClick={saveUsdRate}
-                disabled={usdSaving}
-                className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2 active:scale-95"
-                data-testid="ab-usd-rate-save"
-              >
-                {usdSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Kuru Kaydet
-              </Button>
-            </div>
-            {usdRate?.updated_at && (
-              <div className="text-[10px] text-muted-foreground mt-2">
-                Son güncelleme: {new Date(usdRate.updated_at).toLocaleString("tr-TR")}
-              </div>
-            )}
-          </div>
-
           {/* Bot config */}
           <div className="border border-border rounded-sm bg-card p-5">
             <div className="text-sm font-medium text-foreground mb-4 flex items-center gap-2">
