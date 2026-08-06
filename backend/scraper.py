@@ -12,12 +12,20 @@ module itself has no I/O to the app DB (keeps it easy to unit-test / substitute)
 from __future__ import annotations
 import asyncio
 import logging
+import os
 import re
+import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import List, Optional, Tuple
 
+# Ensure Playwright uses the pre-installed browsers path from the pod
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
+
 log = logging.getLogger("scraper")
+
+DEBUG_DIR = "/tmp/scraper_debug"
+os.makedirs(DEBUG_DIR, exist_ok=True)
 
 
 @dataclass
@@ -38,6 +46,7 @@ class ScrapeResult:
     target_date: str
     rows: List[ScrapedRow] = field(default_factory=list)
     error: Optional[str] = None
+    debug_screenshot: Optional[str] = None  # filename in DEBUG_DIR, or None
     # Aggregated: {(provider, method, tur_key): total_amount}
     # tur_key ∈ {"deposit", "withdrawal"}
     aggregates: dict = field(default_factory=dict)
@@ -100,20 +109,73 @@ async def _login(page, base_url: str, username: str, password: str, timeout_ms: 
     login_url = base_url.rstrip("/") + "/login"
     log.info(f"[scraper] Navigating to {login_url}")
     await page.goto(login_url, wait_until="domcontentloaded", timeout=timeout_ms)
-    # Fill known input names
-    await page.wait_for_selector('input[name="username"]', timeout=timeout_ms)
-    await page.fill('input[name="username"]', username)
-    await page.fill('input[name="password"]', password)
-    # Submit the form
+    # Fill known input names (fallback to type selectors if names differ)
+    try:
+        await page.wait_for_selector('input[name="username"], input[name="email"]', timeout=timeout_ms)
+    except Exception:
+        raise RuntimeError("Login formu bulunamadı — URL'yi kontrol edin (Base URL doğru mu?)")
+
+    if await page.locator('input[name="username"]').count() > 0:
+        await page.fill('input[name="username"]', username)
+    else:
+        await page.fill('input[name="email"]', username)
+
+    if await page.locator('input[name="password"]').count() > 0:
+        await page.fill('input[name="password"]', password)
+    else:
+        await page.fill('input[type="password"]', password)
+
     await page.click('button[type="submit"]')
     # Wait for either navigation away from /login OR an error toast/alert
     try:
         await page.wait_for_url(lambda url: "/login" not in url, timeout=timeout_ms)
     except Exception:
-        # Check for visible error text
-        body = await page.content()
-        raise RuntimeError("Giriş başarısız — kimlik bilgileri hatalı veya kaptcha var olabilir")
+        # Try to surface an on-page error message if visible
+        err = None
+        try:
+            for sel in ['[role="alert"]', '.text-destructive', '[data-sonner-toast]']:
+                loc = page.locator(sel)
+                if await loc.count() > 0:
+                    err = (await loc.first.inner_text()).strip()
+                    if err:
+                        break
+        except Exception:
+            pass
+        raise RuntimeError(f"Giriş başarısız — {err or 'kimlik bilgileri hatalı olabilir veya captcha var'}")
     log.info(f"[scraper] Logged in, current URL: {page.url}")
+
+
+async def test_login_only(base_url: str, username: str, password: str,
+                          headless: bool = True, timeout_ms: int = 30000) -> dict:
+    """Attempt login only; return {ok, message, landing_url?, debug_screenshot?}. No data extraction."""
+    from playwright.async_api import async_playwright
+    result: dict = {"ok": False, "message": None, "landing_url": None, "debug_screenshot": None}
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=headless, args=["--no-sandbox"])
+            ctx = await browser.new_context(locale="tr-TR")
+            page = await ctx.new_page()
+            page.set_default_timeout(timeout_ms)
+            try:
+                await _login(page, base_url, username, password, timeout_ms=timeout_ms)
+                result["ok"] = True
+                result["landing_url"] = page.url
+                result["message"] = "Bağlantı başarılı — login yapıldı."
+            except Exception as e:
+                fname = f"login_fail_{_uuid.uuid4().hex[:8]}.png"
+                fpath = os.path.join(DEBUG_DIR, fname)
+                try:
+                    await page.screenshot(path=fpath, full_page=False)
+                    result["debug_screenshot"] = fname
+                except Exception:
+                    pass
+                result["message"] = str(e)
+            finally:
+                await ctx.close()
+                await browser.close()
+    except Exception as e:
+        result["message"] = f"Tarayıcı başlatılamadı: {e}"
+    return result
 
 
 async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 30000) -> List[ScrapedRow]:
@@ -256,6 +318,16 @@ async def scrape_playspintech_backoffice(
                 result.rows = all_rows
                 result.aggregates = _aggregate(all_rows)
                 result.ok = True
+            except Exception as inner:
+                # Capture screenshot for debugging
+                try:
+                    fname = f"scrape_fail_{_uuid.uuid4().hex[:8]}.png"
+                    fpath = os.path.join(DEBUG_DIR, fname)
+                    await page.screenshot(path=fpath, full_page=False)
+                    result.debug_screenshot = fname
+                except Exception:
+                    pass
+                raise
             finally:
                 await ctx.close()
                 await browser.close()

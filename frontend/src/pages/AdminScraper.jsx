@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import {
   Bot, Save, Loader2, Play, Plus, Trash2, ChevronDown, ChevronRight,
-  KeyRound, Link2, CheckCircle2, XCircle, MinusCircle, RefreshCw, Calendar,
+  KeyRound, Link2, CheckCircle2, XCircle, MinusCircle, RefreshCw, Calendar, Zap,
 } from "lucide-react";
 
 function fmtDate(iso) {
@@ -43,6 +43,8 @@ export default function AdminScraper() {
   const [paymentMethods, setPaymentMethods] = useState({}); // by site_id
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
   const [runDateOpen, setRunDateOpen] = useState(false);
   const [runDate, setRunDate] = useState("");
   const [runResult, setRunResult] = useState(null);
@@ -148,6 +150,23 @@ export default function AdminScraper() {
       toast.error(e?.response?.data?.detail || "Çalıştırılamadı");
     } finally {
       setRunning(false);
+    }
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await api.post(`/admin/scraper/${detail.site_id}/test-connection`);
+      setTestResult(r.data);
+      if (r.data?.ok) toast.success("Bağlantı başarılı — login yapıldı ✓");
+      else toast.error(`Bağlantı başarısız: ${r.data?.message || "bilinmeyen"}`);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || "Test başarısız";
+      setTestResult({ ok: false, message: msg });
+      toast.error(msg);
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -322,6 +341,16 @@ export default function AdminScraper() {
                         {detail.last_run_error && (
                           <div className="text-[hsl(345_100%_65%)] font-data text-[11px]" data-testid="scraper-last-error">Hata: {detail.last_run_error}</div>
                         )}
+                        {detail.last_run_summary?.debug_screenshot && (
+                          <a
+                            href={`${process.env.REACT_APP_BACKEND_URL}/api/admin/scraper/debug/${detail.last_run_summary.debug_screenshot}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-primary underline text-[11px] block mt-1"
+                          >
+                            Debug ekran görüntüsünü aç →
+                          </a>
+                        )}
                         {detail.last_run_summary?.applied?.length > 0 && (
                           <ul className="mt-2 space-y-0.5 text-muted-foreground">
                             {detail.last_run_summary.applied.map((a, i) => (
@@ -346,13 +375,50 @@ export default function AdminScraper() {
 
                     {/* Actions */}
                     <div className="flex flex-wrap gap-2 justify-end pt-2">
-                      <Button onClick={openRun} variant="outline" className="rounded-sm border-border h-9 gap-2" disabled={!detail.enabled || !detail.password_set && !detail._password_input} data-testid="scraper-run-now">
+                      <Button
+                        onClick={testConnection}
+                        disabled={testing || !detail.password_set}
+                        variant="outline"
+                        className="rounded-sm border-border h-9 gap-2 disabled:opacity-40"
+                        title={!detail.password_set ? "Önce şifreyi kaydet" : "Sadece login denemesi yap"}
+                        data-testid="scraper-test-connection"
+                      >
+                        {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />} Bağlantı Testi
+                      </Button>
+                      <Button onClick={openRun} variant="outline" className="rounded-sm border-border h-9 gap-2" disabled={!detail.enabled || (!detail.password_set && !detail._password_input)} data-testid="scraper-run-now">
                         <Play className="w-3.5 h-3.5" /> Şimdi Çek
                       </Button>
                       <Button onClick={save} disabled={saving} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2" data-testid="scraper-save">
                         {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Kaydet
                       </Button>
                     </div>
+
+                    {/* Test result panel */}
+                    {testResult && (
+                      <div className="border border-border rounded-sm bg-card p-4 text-xs" data-testid="scraper-test-result">
+                        {testResult.ok ? (
+                          <div>
+                            <div className="text-[hsl(144_100%_55%)] mb-1 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> {testResult.message}</div>
+                            {testResult.landing_url && <div className="text-muted-foreground font-data text-[11px]">Landed on: {testResult.landing_url}</div>}
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="text-[hsl(345_100%_65%)] mb-2 flex items-center gap-1"><XCircle className="w-3.5 h-3.5" /> {testResult.message}</div>
+                            {testResult.debug_screenshot && (
+                              <a
+                                href={`${process.env.REACT_APP_BACKEND_URL}/api/admin/scraper/debug/${testResult.debug_screenshot}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-primary underline text-[11px]"
+                                data-testid="scraper-debug-link"
+                              >
+                                Debug ekran görüntüsünü aç →
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -395,7 +461,19 @@ export default function AdminScraper() {
                     )}
                   </div>
                 ) : (
-                  <div className="text-[hsl(345_100%_65%)]">✗ {runResult.error}</div>
+                  <div>
+                    <div className="text-[hsl(345_100%_65%)] mb-2">✗ {runResult.error}</div>
+                    {runResult.debug_screenshot && (
+                      <a
+                        href={`${process.env.REACT_APP_BACKEND_URL}/api/admin/scraper/debug/${runResult.debug_screenshot}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-primary underline"
+                      >
+                        Debug ekran görüntüsünü aç →
+                      </a>
+                    )}
+                  </div>
                 )}
               </div>
             )}

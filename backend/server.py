@@ -3574,7 +3574,8 @@ async def delete_rollover(rid: str, user: dict = Depends(require_admin)):
 # ============== SCRAPER (Backoffice → Daily Entry Automation) ==============
 
 from cryptography.fernet import Fernet, InvalidToken
-from scraper import scrape_playspintech_backoffice, ScrapeResult
+from scraper import scrape_playspintech_backoffice, ScrapeResult, test_login_only, DEBUG_DIR as SCRAPER_DEBUG_DIR
+from fastapi.responses import FileResponse
 
 
 def _get_fernet() -> Fernet:
@@ -3826,7 +3827,7 @@ async def _run_scraper_for_site(site_id: str, target_date_iso: str, triggered_by
 
     now = datetime.now(timezone.utc).isoformat()
     if not result.ok:
-        summary = {"error": result.error, "target_date": target_date_iso, "triggered_by": triggered_by}
+        summary = {"error": result.error, "target_date": target_date_iso, "triggered_by": triggered_by, "debug_screenshot": result.debug_screenshot}
         await db.scraper_configs.update_one(
             {"site_id": site_id},
             {"$set": {
@@ -3844,7 +3845,7 @@ async def _run_scraper_for_site(site_id: str, target_date_iso: str, triggered_by
             )
         except Exception:
             pass
-        return {"ok": False, "error": result.error, "target_date": target_date_iso}
+        return {"ok": False, "error": result.error, "target_date": target_date_iso, "debug_screenshot": result.debug_screenshot}
 
     applied_summary = await _apply_scrape_to_transactions(site_id, cfg, target_date_iso, result)
     summary = {**applied_summary, "target_date": target_date_iso, "triggered_by": triggered_by}
@@ -3883,6 +3884,34 @@ async def _run_scraper_for_site(site_id: str, target_date_iso: str, triggered_by
 
 class ScraperRunInput(BaseModel):
     target_date: Optional[str] = None  # YYYY-MM-DD; defaults to yesterday
+
+
+@api_router.post("/admin/scraper/{site_id}/test-connection")
+async def test_scraper_connection(site_id: str, user: dict = Depends(require_admin)):
+    """Quick test: attempt login only. Uses currently-saved credentials. No data extraction."""
+    cfg = await db.scraper_configs.find_one({"site_id": site_id}, {"_id": 0}) or {}
+    if not (cfg.get("base_url") and cfg.get("username") and cfg.get("password_enc")):
+        raise HTTPException(400, "URL / kullanıcı adı / şifre eksik — önce kaydet")
+    try:
+        password = _dec(cfg["password_enc"])
+    except HTTPException as e:
+        return {"ok": False, "message": f"Şifre çözülemedi: {e.detail}"}
+    result = await test_login_only(cfg["base_url"], cfg["username"], password)
+    await log_audit(user, "scraper.test_connection", "scraper_config", site_id,
+                    details={"ok": result.get("ok")}, site_id=site_id)
+    return result
+
+
+@api_router.get("/admin/scraper/debug/{filename}")
+async def get_scraper_debug_screenshot(filename: str, user: dict = Depends(require_admin)):
+    """Serve a debug screenshot captured during a failed login/scrape."""
+    # Prevent path traversal
+    if "/" in filename or ".." in filename or not filename.endswith(".png"):
+        raise HTTPException(400, "Geçersiz dosya adı")
+    fpath = os.path.join(SCRAPER_DEBUG_DIR, filename)
+    if not os.path.isfile(fpath):
+        raise HTTPException(404, "Görüntü bulunamadı")
+    return FileResponse(fpath, media_type="image/png")
 
 
 @api_router.post("/admin/scraper/{site_id}/run")
