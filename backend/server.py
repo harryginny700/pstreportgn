@@ -3571,6 +3571,366 @@ async def delete_rollover(rid: str, user: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# ============== SCRAPER (Backoffice → Daily Entry Automation) ==============
+
+from cryptography.fernet import Fernet, InvalidToken
+from scraper import scrape_playspintech_backoffice, ScrapeResult
+
+
+def _get_fernet() -> Fernet:
+    key = os.environ.get("SCRAPER_ENC_KEY")
+    if not key:
+        raise HTTPException(500, "SCRAPER_ENC_KEY tanımlı değil — .env'e ekleyin")
+    return Fernet(key.encode() if isinstance(key, str) else key)
+
+
+def _enc(secret: str) -> str:
+    return _get_fernet().encrypt(secret.encode()).decode()
+
+
+def _dec(cipher: str) -> str:
+    try:
+        return _get_fernet().decrypt(cipher.encode()).decode()
+    except InvalidToken:
+        raise HTTPException(500, "Şifrelenmiş kimlik bilgisi okunamadı (anahtar değişmiş olabilir)")
+
+
+# ---- Models ----
+
+class ScraperMapping(BaseModel):
+    """Maps source (provider, method) to our internal payment_method_id."""
+    provider: str
+    method: str
+    payment_method_id: str
+
+
+class ScraperConfigInput(BaseModel):
+    enabled: Optional[bool] = None
+    base_url: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None  # plain — will be encrypted server-side
+    deposits_path: Optional[str] = None
+    withdrawals_path: Optional[str] = None
+    mappings: Optional[List[ScraperMapping]] = None
+
+
+DEFAULT_DEPOSITS_PATH = "/transactions/deposits"
+DEFAULT_WITHDRAWALS_PATH = "/transactions/withdrawals"
+
+
+def _scraper_public(doc: dict) -> dict:
+    """Return a config safe to send to the frontend (no password material)."""
+    doc = doc or {}
+    return {
+        "site_id": doc.get("site_id"),
+        "enabled": bool(doc.get("enabled")),
+        "base_url": doc.get("base_url") or "",
+        "username": doc.get("username") or "",
+        "password_set": bool(doc.get("password_enc")),
+        "deposits_path": doc.get("deposits_path") or DEFAULT_DEPOSITS_PATH,
+        "withdrawals_path": doc.get("withdrawals_path") or DEFAULT_WITHDRAWALS_PATH,
+        "mappings": doc.get("mappings") or [],
+        "last_run_at": doc.get("last_run_at"),
+        "last_run_status": doc.get("last_run_status"),
+        "last_run_error": doc.get("last_run_error"),
+        "last_run_summary": doc.get("last_run_summary"),
+    }
+
+
+# ---- CRUD endpoints (admin only) ----
+
+
+@api_router.get("/admin/scraper/{site_id}")
+async def get_scraper_config(site_id: str, user: dict = Depends(require_admin)):
+    site = await db.sites.find_one({"id": site_id}, {"_id": 0, "id": 1, "name": 1})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+    doc = await db.scraper_configs.find_one({"site_id": site_id}, {"_id": 0}) or {"site_id": site_id}
+    return _scraper_public(doc)
+
+
+@api_router.put("/admin/scraper/{site_id}")
+async def put_scraper_config(site_id: str, inp: ScraperConfigInput, user: dict = Depends(require_admin)):
+    site = await db.sites.find_one({"id": site_id}, {"_id": 0, "id": 1})
+    if not site:
+        raise HTTPException(404, "Site bulunamadı")
+
+    now = datetime.now(timezone.utc).isoformat()
+    update: dict = {"updated_at": now}
+    if inp.enabled is not None:
+        update["enabled"] = bool(inp.enabled)
+    if inp.base_url is not None:
+        update["base_url"] = inp.base_url.strip().rstrip("/")
+    if inp.username is not None:
+        update["username"] = inp.username.strip()
+    if inp.password:  # only re-encrypt if new plain password provided
+        update["password_enc"] = _enc(inp.password)
+    if inp.deposits_path is not None:
+        update["deposits_path"] = inp.deposits_path.strip() or DEFAULT_DEPOSITS_PATH
+    if inp.withdrawals_path is not None:
+        update["withdrawals_path"] = inp.withdrawals_path.strip() or DEFAULT_WITHDRAWALS_PATH
+    if inp.mappings is not None:
+        # Validate all payment_method_ids belong to this site
+        pm_ids = [m.payment_method_id for m in inp.mappings]
+        valid = await db.payment_methods.find(
+            {"site_id": site_id, "id": {"$in": pm_ids}}, {"_id": 0, "id": 1}
+        ).to_list(1000)
+        valid_ids = {p["id"] for p in valid}
+        for m in inp.mappings:
+            if m.payment_method_id not in valid_ids:
+                raise HTTPException(400, f"Ödeme yöntemi bulunamadı: {m.payment_method_id}")
+        update["mappings"] = [m.model_dump() for m in inp.mappings]
+
+    await db.scraper_configs.update_one(
+        {"site_id": site_id},
+        {"$set": update, "$setOnInsert": {"site_id": site_id, "created_at": now}},
+        upsert=True,
+    )
+    await log_audit(
+        user, "scraper.config", "scraper_config", site_id,
+        details={k: (v if k != "password_enc" else "<updated>") for k, v in update.items()},
+        site_id=site_id,
+    )
+    doc = await db.scraper_configs.find_one({"site_id": site_id}, {"_id": 0})
+    return _scraper_public(doc)
+
+
+@api_router.get("/admin/scraper")
+async def list_scraper_configs(user: dict = Depends(require_admin)):
+    """List all sites with their scraper config status."""
+    sites = await db.sites.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    configs = {c["site_id"]: c async for c in db.scraper_configs.find({}, {"_id": 0})}
+    out = []
+    for s in sites:
+        c = configs.get(s["id"], {"site_id": s["id"]})
+        out.append({**_scraper_public(c), "site_name": s.get("name")})
+    return out
+
+
+# ---- Scrape execution (writes to transactions) ----
+
+
+async def _apply_scrape_to_transactions(
+    site_id: str, cfg: dict, target_date_iso: str, result: ScrapeResult, user_email: str = "system"
+) -> dict:
+    """Given a ScrapeResult, upsert into `transactions` collection for that day+site.
+    Groups by (provider, method) → payment_method_id via cfg.mappings.
+    Returns per-mapping summary + unmapped list.
+    """
+    mappings = cfg.get("mappings") or []
+    # Build lookup: normalized (provider, method) → payment_method_id
+    lut: dict = {}
+    for m in mappings:
+        key = (m["provider"].strip().lower(), m["method"].strip().lower())
+        lut[key] = m["payment_method_id"]
+
+    # Load site payment methods for name display
+    pms = await db.payment_methods.find({"site_id": site_id}, {"_id": 0}).to_list(1000)
+    pm_by_id = {p["id"]: p for p in pms}
+
+    # Aggregate deposits/withdrawals per payment_method_id
+    per_pm: dict = {}  # {pm_id: {"deposit":x, "withdrawal":y}}
+    unmapped: List[dict] = []
+    for (provider, method, tur_key), amount in result.aggregates.items():
+        pm_id = lut.get((provider.strip().lower(), method.strip().lower()))
+        if not pm_id:
+            unmapped.append({"provider": provider, "method": method, "tur": tur_key, "amount": amount})
+            continue
+        entry = per_pm.setdefault(pm_id, {"deposit": 0.0, "withdrawal": 0.0})
+        entry[tur_key] = round(entry.get(tur_key, 0.0) + amount, 2)
+
+    # Upsert transactions per payment_method
+    applied = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for pm_id, sums in per_pm.items():
+        pm = pm_by_id.get(pm_id)
+        if not pm:
+            continue
+        # Compute commission using payment_method's deposit_commission_pct if defined
+        dep = float(sums.get("deposit", 0.0))
+        wd = float(sums.get("withdrawal", 0.0))
+        commission_pct = float(pm.get("deposit_commission_pct") or pm.get("commission_pct") or 0.0)
+        commission = round(dep * commission_pct / 100.0, 2)
+        net = round(dep - wd - commission, 2)
+
+        existing = await db.transactions.find_one(
+            {"site_id": site_id, "date": target_date_iso, "payment_method_id": pm_id},
+            {"_id": 0},
+        )
+        if existing:
+            await db.transactions.update_one(
+                {"id": existing["id"]},
+                {"$set": {
+                    "deposit": dep,
+                    "withdrawal": wd,
+                    "commission": commission,
+                    "net": net,
+                    "note": f"Scraper (auto) — {now_iso}",
+                }},
+            )
+        else:
+            obj = {
+                "id": uid(),
+                "site_id": site_id,
+                "date": target_date_iso,
+                "payment_method_id": pm_id,
+                "deposit": dep,
+                "withdrawal": wd,
+                "commission": commission,
+                "net": net,
+                "note": "Scraper (auto)",
+                "created_at": now_iso,
+            }
+            await db.transactions.insert_one(obj)
+
+        applied.append({
+            "payment_method_id": pm_id,
+            "payment_method_name": pm.get("name"),
+            "deposit": dep,
+            "withdrawal": wd,
+            "commission": commission,
+            "net": net,
+        })
+
+    return {
+        "applied": applied,
+        "unmapped": unmapped,
+        "row_count": len(result.rows),
+    }
+
+
+async def _run_scraper_for_site(site_id: str, target_date_iso: str, triggered_by: str = "cron") -> dict:
+    """Fetch config, decrypt password, execute scraper, apply to DB, log status."""
+    cfg = await db.scraper_configs.find_one({"site_id": site_id}, {"_id": 0}) or {}
+    site = await db.sites.find_one({"id": site_id}, {"_id": 0}) or {}
+    site_name = site.get("name", site_id)
+
+    if not cfg.get("enabled"):
+        return {"ok": False, "error": "disabled"}
+    if not (cfg.get("base_url") and cfg.get("username") and cfg.get("password_enc")):
+        return {"ok": False, "error": "incomplete_config"}
+
+    try:
+        password = _dec(cfg["password_enc"])
+    except HTTPException as e:
+        return {"ok": False, "error": f"decrypt_failed: {e.detail}"}
+
+    result = await scrape_playspintech_backoffice(
+        base_url=cfg["base_url"],
+        username=cfg["username"],
+        password=password,
+        target_iso_date=target_date_iso,
+        deposits_path=cfg.get("deposits_path") or DEFAULT_DEPOSITS_PATH,
+        withdrawals_path=cfg.get("withdrawals_path") or DEFAULT_WITHDRAWALS_PATH,
+    )
+
+    now = datetime.now(timezone.utc).isoformat()
+    if not result.ok:
+        summary = {"error": result.error, "target_date": target_date_iso, "triggered_by": triggered_by}
+        await db.scraper_configs.update_one(
+            {"site_id": site_id},
+            {"$set": {
+                "last_run_at": now,
+                "last_run_status": "failed",
+                "last_run_error": result.error,
+                "last_run_summary": summary,
+            }},
+        )
+        # Telegram error notice
+        try:
+            await _admin_notify(
+                "site_setup",  # reuse category (admin_payment_created also OK). Use dedicated hook.
+                f"*Scraper — Hata* ❌\n_Site:_ `{site_name}`\n_Gün:_ `{target_date_iso}`\n_Hata:_ `{result.error}`",
+            )
+        except Exception:
+            pass
+        return {"ok": False, "error": result.error, "target_date": target_date_iso}
+
+    applied_summary = await _apply_scrape_to_transactions(site_id, cfg, target_date_iso, result)
+    summary = {**applied_summary, "target_date": target_date_iso, "triggered_by": triggered_by}
+    await db.scraper_configs.update_one(
+        {"site_id": site_id},
+        {"$set": {
+            "last_run_at": now,
+            "last_run_status": "success",
+            "last_run_error": None,
+            "last_run_summary": summary,
+        }},
+    )
+    # Telegram success digest
+    try:
+        lines = [
+            f"*Scraper — Tamamlandı* ✅",
+            f"_Site:_ `{site_name}`",
+            f"_Gün:_ `{target_date_iso}`",
+            f"_Satır:_ {applied_summary['row_count']}",
+            "",
+        ]
+        for a in applied_summary["applied"]:
+            lines.append(
+                f"• {a['payment_method_name']}: Y ₺{_amt(a['deposit'])} · Ç ₺{_amt(a['withdrawal'])} · Kom ₺{_amt(a['commission'])} · Net ₺{_amt(a['net'])}"
+            )
+        if applied_summary["unmapped"]:
+            lines.append("")
+            lines.append("_Eşlenmemiş kaynaklar:_")
+            for u in applied_summary["unmapped"]:
+                lines.append(f"  · {u['provider']} · {u['method']} ({u['tur']}) → ₺{_amt(u['amount'])}")
+        await _admin_notify("site_setup", "\n".join(lines))
+    except Exception:
+        pass
+    return {"ok": True, **applied_summary, "target_date": target_date_iso}
+
+
+class ScraperRunInput(BaseModel):
+    target_date: Optional[str] = None  # YYYY-MM-DD; defaults to yesterday
+
+
+@api_router.post("/admin/scraper/{site_id}/run")
+async def run_scraper_now(site_id: str, inp: ScraperRunInput, user: dict = Depends(require_admin)):
+    """Manual trigger — scrapes yesterday (or the specified date) for a single site."""
+    target = inp.target_date or (date.today() - timedelta(days=1)).isoformat()
+    # Validate format
+    try:
+        datetime.strptime(target, "%Y-%m-%d")
+    except Exception:
+        raise HTTPException(400, "Geçersiz tarih (YYYY-MM-DD)")
+    result = await _run_scraper_for_site(site_id, target, triggered_by=f"manual:{user.get('email')}")
+    await log_audit(user, "scraper.run", "scraper_config", site_id,
+                    details={"target_date": target, "ok": result.get("ok")}, site_id=site_id)
+    return result
+
+
+async def _scraper_daily_loop():
+    """Background task: at 01:00 Europe/Istanbul (22:00 UTC), scrape yesterday for all enabled sites."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            target = now.replace(hour=22, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            sleep_sec = (target - now).total_seconds()
+            logging.info(f"[scraper] Next daily run in {int(sleep_sec / 60)} min at {target.isoformat()}")
+            await asyncio.sleep(sleep_sec)
+
+            yesterday = (date.today() - timedelta(days=1)).isoformat()
+            configs = await db.scraper_configs.find({"enabled": True}, {"_id": 0, "site_id": 1}).to_list(1000)
+            for c in configs:
+                sid = c.get("site_id")
+                if not sid:
+                    continue
+                logging.info(f"[scraper] Running daily for site {sid} — target {yesterday}")
+                try:
+                    r = await _run_scraper_for_site(sid, yesterday, triggered_by="cron")
+                    logging.info(f"[scraper] Site {sid} result ok={r.get('ok')}")
+                except Exception as e:
+                    logging.error(f"[scraper] Site {sid} error: {e}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logging.error(f"[scraper] Loop error: {e}")
+            await asyncio.sleep(600)
+
+
 # ============== ROOT ==============
 
 @api_router.get("/")
@@ -3666,11 +4026,12 @@ async def _startup():
     app.state.reminder_task = asyncio.create_task(_daily_reminder_loop())
     app.state.digest_task = asyncio.create_task(_admin_daily_digest_loop())
     app.state.usd_rate_task = asyncio.create_task(_usd_rate_fetch_loop())
+    app.state.scraper_task = asyncio.create_task(_scraper_daily_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    for attr in ("reminder_task", "digest_task", "usd_rate_task"):
+    for attr in ("reminder_task", "digest_task", "usd_rate_task", "scraper_task"):
         task = getattr(app.state, attr, None)
         if task and not task.done():
             task.cancel()

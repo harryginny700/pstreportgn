@@ -92,6 +92,22 @@ Turkish iGaming operator finance dashboard. Playspintech = provider (parent bran
   - **Legacy note**: Eski `site_credits` kayıtları için USD alanları null (yeni açılanlarda otomatik). Eski krediye USD ödeme yapmak istersen backend fallback current_rate kullanır.
 
 ### v2.7 - Admin Ayarlar Sayfası + Otomatik USD/TRY Kuru (2026-02-19)
+- Yeni sayfa `/admin/ayarlar` (AdminSettings.jsx) — Tabbed: `USD / TRY Kuru` + `Telegram Botu`. Sidebar'a "Ayarlar" eklendi; legacy `/admin/bot` → `/admin/ayarlar?tab=bot` yönlendirmesi.
+- Otomatik canlı USD/TRY: `open.er-api.com` (birincil) + `frankfurter.app` (yedek), asyncio background loop her saat başı `admin_settings.usd_rate` günceller.
+- Yeni endpointler: `GET/PUT /api/admin/settings/usd-rate`, `POST /api/admin/settings/usd-rate/refresh`, `GET /api/settings/usd-rate/public`.
+- Topbar widget theme toggle yanında canlı USD/TRY kuru.
+- Ortak Kasalar sayfasına her kasa bakiyesi altına USD karşılığı (dinamik canlı kur ile).
+- Kredi USD Saklama: yeni kredi eklendiğinde backend anlık `usd_rate` ile `amount_usd`, `debt_usd`, `exchange_rate` alanları otomatik dolar.
+
+### v2.8 - Otomatik Veri Çekme (Scraper) MVP (2026-08-06)
+- **Yeni sayfa** `/admin/scraper` (AdminScraper.jsx): per-site config accordion (URL, kullanıcı adı, şifre, mapping tablosu, son durum, "Şimdi Çek" butonu).
+- **Backend scraper modülü** `/app/backend/scraper.py` (Playwright headless Chromium) — Next.js SPA login formuna girer, `/transactions/deposits` + `/transactions/withdrawals` sayfalarını gezer, `Durum=Tamamlandı` olan satırların Tutar'ını `(Sağlayıcı, Yöntem)` × `(Yatırım/Çekim)` şeklinde grupladıktan sonra döner.
+- **Şifreli storage**: `.env`'de `SCRAPER_ENC_KEY` (Fernet AES-128). Şifreler DB'de `password_enc` alanında şifreli tutulur; API'de asla plain döndürülmez, `password_set` bool döner.
+- **Endpointler**: `GET/PUT /api/admin/scraper/{site_id}`, `GET /api/admin/scraper` (liste), `POST /api/admin/scraper/{site_id}/run` (manuel çalıştırma).
+- **Cron**: Her gün 01:00 TR (22:00 UTC) `_scraper_daily_loop` çalışır — etkin (`enabled=true`) tüm siteleri sırayla scrape eder, dünün verisini Günlük Giriş tablosuna (`transactions` collection) upsert eder ve Telegram özet gönderir.
+- **Mapping**: Kaynak `(Sağlayıcı, Yöntem)` çifti admin panelinden manuel olarak `payment_method_id`'ye eşlenir; eşleşmeyen kaynaklar Günlük Giriş'e YAZILMAZ, "unmapped" listesinde raporlanır.
+- **Bağımlılıklar**: `playwright==1.62.0`, `cryptography==49.0.0`. Chromium headless-shell yüklü.
+- **Note**: Gerçek scraping E2E testi kullanıcının kendi backoffice hesabıyla test edilecek (kimlik bilgileri henüz girilmedi).
 - **Yeni sayfa** `/admin/ayarlar` (AdminSettings): tabbed layout with 2 sekme — `USD / TRY Kuru` ve `Telegram Botu`.
 - **Sidebar**: eski `Telegram Botu` linki kaldırıldı; yerine `Ayarlar` (nav-admin-settings) linki eklendi. Legacy `/admin/bot` → `/admin/ayarlar?tab=bot` yönlendirmesi (Navigate replace).
 - **Otomatik canlı USD/TRY**: `open.er-api.com` (birincil) + `frankfurter.app` (yedek) ile background asyncio loop her saat başı `admin_settings.usd_rate` günceller. Startup'ta 10sn sonra ilk fetch.
