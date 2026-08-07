@@ -112,3 +112,5 @@ frontend/node_modules/.cache/default-development/32.pack
 frontend/node_modules/.cache/default-development/34.pack
 frontend/node_modules/.cache/default-development/31.pack
 frontend/node_modules/.cache/default-development/22.pack
+pw-browsers/chromium_headless_shell-1234/chrome-linux/headless_shell
+pw-browsers/chromium-1234/chrome-linux/chrome

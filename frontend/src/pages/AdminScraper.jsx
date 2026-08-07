@@ -558,12 +558,43 @@ export default function AdminScraper() {
                 </div>
                 <div className="space-y-0.5 font-data">
                   {(backfillResult.results || []).map((r) => (
-                    <div key={r.date} className="flex items-center gap-2">
+                    <div key={r.date} className="flex items-center gap-2 flex-wrap">
                       <span className="text-muted-foreground w-24">{r.date}</span>
                       {r.ok ? (
-                        <span className="text-[hsl(144_100%_55%)] text-[11px]">✓ {r.row_count || 0} satır</span>
+                        <>
+                          <span className={r.row_count > 0 ? "text-[hsl(144_100%_55%)] text-[11px]" : "text-[hsl(45_100%_60%)] text-[11px]"}>
+                            {r.row_count > 0 ? `✓ ${r.row_count} satır` : `⚠ 0 satır bulundu`}
+                          </span>
+                          {r.diagnostics && (
+                            <span className="text-muted-foreground text-[10px]">
+                              (Y: {r.diagnostics.deposits?.total_seen ?? 0} taranmış, Ç: {r.diagnostics.withdrawals?.total_seen ?? 0})
+                            </span>
+                          )}
+                          {r.debug_screenshot && (
+                            <a
+                              href={`${process.env.REACT_APP_BACKEND_URL}/api/admin/scraper/debug/${r.debug_screenshot}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-primary underline text-[10px]"
+                            >
+                              screenshot
+                            </a>
+                          )}
+                        </>
                       ) : (
-                        <span className="text-[hsl(345_100%_65%)] text-[11px]">✗ {r.error}</span>
+                        <>
+                          <span className="text-[hsl(345_100%_65%)] text-[11px]">✗ {r.error}</span>
+                          {r.debug_screenshot && (
+                            <a
+                              href={`${process.env.REACT_APP_BACKEND_URL}/api/admin/scraper/debug/${r.debug_screenshot}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-primary underline text-[10px]"
+                            >
+                              screenshot
+                            </a>
+                          )}
+                        </>
                       )}
                     </div>
                   ))}

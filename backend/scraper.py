@@ -19,8 +19,16 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import List, Optional, Tuple
 
-# Ensure Playwright uses the pre-installed browsers path from the pod
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
+# Ensure Playwright uses a persistent, writable browsers path. Prefer the app-owned
+# volume (survives container restarts) with fallback to the pod-wide cache.
+_pw_paths = ["/app/pw-browsers", "/pw-browsers"]
+for _p in _pw_paths:
+    if os.path.isdir(_p) and any(os.path.exists(os.path.join(_p, d, "chrome-linux", "headless_shell")) for d in os.listdir(_p)):
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = _p
+        break
+else:
+    # Neither has a valid install; still set the preferred one so on-demand install goes there
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/app/pw-browsers")
 
 log = logging.getLogger("scraper")
 
@@ -50,6 +58,8 @@ class ScrapeResult:
     # Aggregated: {(provider, method, tur_key): total_amount}
     # tur_key ∈ {"deposit", "withdrawal"}
     aggregates: dict = field(default_factory=dict)
+    # Diagnostics — help debug when rows are 0 or unexpected
+    diagnostics: dict = field(default_factory=dict)
 
 
 # ---------- Utility parsers ----------
@@ -178,23 +188,58 @@ async def test_login_only(base_url: str, username: str, password: str,
     return result
 
 
-async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 30000) -> List[ScrapedRow]:
+async def _try_set_page_size_100(page):
+    """Try to change the 'Sayfa başına satır' dropdown to the largest option.
+    Uses the shadcn/Radix combobox pattern. Silently no-ops if UI differs."""
+    try:
+        # The screenshot shows a "10" combobox next to "Sayfa başına satır"
+        # Common shadcn/Radix Select uses role=combobox
+        triggers = page.locator('button[role="combobox"]')
+        n = await triggers.count()
+        for i in range(n):
+            t = triggers.nth(i)
+            txt = (await t.inner_text()).strip()
+            # Look for the one showing a small number like "10", "25", "50", "100"
+            if txt in ("10", "25", "50", "100"):
+                await t.click()
+                await page.wait_for_timeout(400)
+                # Try to click 100 first, then 50 as fallback
+                for opt in ("100", "50", "25"):
+                    o = page.locator(f'[role="option"]:has-text("{opt}")').first
+                    if await o.count() > 0:
+                        await o.click()
+                        await page.wait_for_timeout(800)  # wait for re-fetch
+                        log.info(f"[scraper] Page size set to {opt}")
+                        return opt
+                # Close menu if we couldn't find an option
+                await page.keyboard.press("Escape")
+                return None
+    except Exception as e:
+        log.info(f"[scraper] Could not set page size: {e}")
+    return None
+
+
+async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 30000):
     """Extract all visible rows from the current transactions listing table across all pages.
 
-    The page renders a shadcn-style table with columns:
-        ID | Oyuncu | Sağlayıcı | Yöntem | Tür | Durum | Tutar | Önceki | Sonraki | Oluşturulma
-
-    Rows are inspected top-down; if we encounter any row whose Oluşturulma date is EARLIER
-    than target_iso_date we can stop paginating (source lists newest first).
+    Returns a dict: {rows, total_seen, newest_date, oldest_date, pages_visited}
     """
     rows: List[ScrapedRow] = []
     await page.wait_for_selector("table tbody tr", timeout=timeout_ms)
+
+    # Try to raise the page size so we can reach older dates with fewer clicks
+    await _try_set_page_size_100(page)
+    await page.wait_for_timeout(600)
+
     seen_earlier = False
-    max_pages = 50  # safety cap
+    max_pages = 100  # safety cap
+    total_seen = 0
+    all_dates: List[str] = []
+    pages_visited = 0
 
     for page_idx in range(max_pages):
+        pages_visited += 1
         await page.wait_for_timeout(500)  # allow re-render after nav
-        # Grab all row texts as an array of arrays (each row = list of cell texts)
         row_data = await page.evaluate(
             """
             () => {
@@ -207,6 +252,7 @@ async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 3000
         for cells in row_data:
             if len(cells) < 10:
                 continue
+            total_seen += 1
             provider = _norm(cells[2])
             method = _norm(cells[3])
             tur = _norm(cells[4])
@@ -216,12 +262,11 @@ async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 3000
             iso = _iso_date_from_source_created(created)
             if not iso:
                 continue
+            all_dates.append(iso)
             if iso < target_iso_date:
-                # Newest-first ordering — once we cross the target date going back, we can stop
                 seen_earlier = True
                 continue
             if iso != target_iso_date:
-                # newer than target (today) — skip, keep scanning; we still may need to paginate
                 continue
             rows.append(
                 ScrapedRow(
@@ -235,10 +280,9 @@ async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 3000
             )
             page_rows_added += 1
 
-        log.info(f"[scraper] Page {page_idx+1}: added {page_rows_added} rows in target date")
+        log.info(f"[scraper] Page {page_idx+1}: scanned {len(row_data)} rows, added {page_rows_added} in-target")
 
         if seen_earlier:
-            # Done — we've paginated past the target day
             break
 
         # Try to click "next page" — look for the chevron-right icon button
@@ -246,7 +290,8 @@ async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 3000
         if await next_btn.count() == 0:
             break
         disabled = await next_btn.get_attribute("disabled")
-        if disabled is not None:
+        aria_disabled = await next_btn.get_attribute("aria-disabled")
+        if disabled is not None or aria_disabled == "true":
             break
         try:
             await next_btn.click()
@@ -254,15 +299,34 @@ async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 3000
             log.info(f"[scraper] Cannot click next: {e}")
             break
 
-    return rows
+    newest = max(all_dates) if all_dates else None
+    oldest = min(all_dates) if all_dates else None
+    return {
+        "rows": rows,
+        "total_seen": total_seen,
+        "newest_date": newest,
+        "oldest_date": oldest,
+        "pages_visited": pages_visited,
+    }
 
 
-async def _navigate_and_extract(page, base_url: str, path: str, target_iso_date: str) -> List[ScrapedRow]:
+async def _navigate_and_extract(page, base_url: str, path: str, target_iso_date: str, tag: str) -> dict:
+    """Navigate to a listing page, extract rows for target date, save a debug screenshot.
+    Returns {rows, total_seen, newest_date, oldest_date, pages_visited, screenshot}."""
     url = base_url.rstrip("/") + path
     log.info(f"[scraper] Navigating to {url}")
     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    await page.wait_for_timeout(1500)  # let SPA hydrate
-    return await _extract_table_rows(page, target_iso_date)
+    await page.wait_for_timeout(2000)  # let SPA hydrate
+    stats = await _extract_table_rows(page, target_iso_date)
+    # Always capture a screenshot AFTER extraction, so we can see the final page state
+    try:
+        fname = f"{tag}_{target_iso_date}_{_uuid.uuid4().hex[:6]}.png"
+        fpath = os.path.join(DEBUG_DIR, fname)
+        await page.screenshot(path=fpath, full_page=False)
+        stats["screenshot"] = fname
+    except Exception:
+        stats["screenshot"] = None
+    return stats
 
 
 def _aggregate(rows: List[ScrapedRow]) -> dict:
@@ -311,12 +375,18 @@ async def scrape_playspintech_backoffice(
             try:
                 await _login(page, base_url, username, password, timeout_ms=timeout_ms)
 
-                deposits = await _navigate_and_extract(page, base_url, deposits_path, target_iso_date)
-                withdrawals = await _navigate_and_extract(page, base_url, withdrawals_path, target_iso_date)
+                dep_stats = await _navigate_and_extract(page, base_url, deposits_path, target_iso_date, tag="deposits")
+                wd_stats = await _navigate_and_extract(page, base_url, withdrawals_path, target_iso_date, tag="withdrawals")
 
-                all_rows = deposits + withdrawals
+                all_rows = list(dep_stats["rows"]) + list(wd_stats["rows"])
                 result.rows = all_rows
                 result.aggregates = _aggregate(all_rows)
+                result.diagnostics = {
+                    "deposits": {k: v for k, v in dep_stats.items() if k != "rows"},
+                    "withdrawals": {k: v for k, v in wd_stats.items() if k != "rows"},
+                }
+                # Expose the deposits page screenshot as the "debug_screenshot" so UI can link to it
+                result.debug_screenshot = dep_stats.get("screenshot") or wd_stats.get("screenshot")
                 result.ok = True
             except Exception as inner:
                 # Capture screenshot for debugging

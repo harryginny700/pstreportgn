@@ -3848,7 +3848,13 @@ async def _run_scraper_for_site(site_id: str, target_date_iso: str, triggered_by
         return {"ok": False, "error": result.error, "target_date": target_date_iso, "debug_screenshot": result.debug_screenshot}
 
     applied_summary = await _apply_scrape_to_transactions(site_id, cfg, target_date_iso, result)
-    summary = {**applied_summary, "target_date": target_date_iso, "triggered_by": triggered_by}
+    summary = {
+        **applied_summary,
+        "target_date": target_date_iso,
+        "triggered_by": triggered_by,
+        "diagnostics": result.diagnostics,
+        "debug_screenshot": result.debug_screenshot,
+    }
     await db.scraper_configs.update_one(
         {"site_id": site_id},
         {"$set": {
@@ -3879,7 +3885,8 @@ async def _run_scraper_for_site(site_id: str, target_date_iso: str, triggered_by
         await _admin_notify("site_setup", "\n".join(lines))
     except Exception:
         pass
-    return {"ok": True, **applied_summary, "target_date": target_date_iso}
+    return {"ok": True, **applied_summary, "target_date": target_date_iso,
+            "diagnostics": result.diagnostics, "debug_screenshot": result.debug_screenshot}
 
 
 class ScraperRunInput(BaseModel):
