@@ -316,3 +316,66 @@ class TestDiagnosticsCodeLevel:
         src = inspect.getsource(sc._navigate_and_extract)
         assert 'await page.screenshot' in src
         assert '"screenshot"' in src
+
+
+# ---- Iter 11: dynamic column detection ----
+
+class TestDetectColumns:
+    """Verify _detect_columns exists and _extract_table_rows uses `cols` dict
+    (no hardcoded cells[2]..cells[9]) and returns headers/column_map/sample_rows."""
+
+    def test_detect_columns_function_exists(self):
+        import sys
+        sys.path.insert(0, "/app/backend")
+        import scraper as sc  # type: ignore
+        assert hasattr(sc, "_detect_columns"), "_detect_columns must be defined"
+        import inspect
+        assert inspect.iscoroutinefunction(sc._detect_columns), (
+            "_detect_columns must be an async function")
+
+    def test_detect_columns_returns_expected_keys(self):
+        import inspect, sys
+        sys.path.insert(0, "/app/backend")
+        import scraper as sc  # type: ignore
+        src = inspect.getsource(sc._detect_columns)
+        # Must return a dict with each logical column key
+        for key in ("headers", "provider", "method", "tur", "status", "amount", "created"):
+            assert f'"{key}"' in src, f"_detect_columns must map key {key!r}"
+        # Reads THEAD headers
+        assert "thead th" in src
+
+    def test_extract_table_rows_uses_dynamic_cols(self):
+        import inspect, sys
+        sys.path.insert(0, "/app/backend")
+        import scraper as sc  # type: ignore
+        src = inspect.getsource(sc._extract_table_rows)
+        # Must call _detect_columns
+        assert "_detect_columns" in src, "must call _detect_columns"
+        # Must use cols dict lookup, NOT hardcoded numeric cells[9]/[2] etc for the
+        # provider/method/tur/status/amount/created columns
+        for bad in ("cells[2]", "cells[3]", "cells[4]", "cells[5]", "cells[6]",
+                    "cells[7]", "cells[8]", "cells[9]"):
+            assert bad not in src, f"Hardcoded {bad} should be removed"
+        # Must reference cols["provider"]/["method"]/etc.
+        for key in ("provider", "method", "tur", "status", "amount", "created"):
+            assert f'cols["{key}"]' in src or f"cols['{key}']" in src, (
+                f"cols[{key!r}] must be used")
+
+    def test_extract_returns_headers_column_map_sample_rows(self):
+        import inspect, sys
+        sys.path.insert(0, "/app/backend")
+        import scraper as sc  # type: ignore
+        src = inspect.getsource(sc._extract_table_rows)
+        for key in ("headers", "column_map", "sample_rows"):
+            assert f'"{key}"' in src, (
+                f"_extract_table_rows must return key {key!r} in its dict")
+
+    def test_frontend_renders_tablo_yapisi_debug_section(self):
+        """AdminScraper.jsx should render <details><summary>Tablo yapısı</summary></details>
+        with headers + column_map + sample_rows for successful days."""
+        with open("/app/frontend/src/pages/AdminScraper.jsx", "r") as f:
+            src = f.read()
+        assert "Tablo yapısı" in src, "frontend must render 'Tablo yapısı (debug)' section"
+        assert "column_map" in src
+        assert "sample_rows" in src
+        assert "headers" in src

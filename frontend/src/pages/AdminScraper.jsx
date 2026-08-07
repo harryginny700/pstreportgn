@@ -566,9 +566,23 @@ export default function AdminScraper() {
                             {r.row_count > 0 ? `✓ ${r.row_count} satır` : `⚠ 0 satır bulundu`}
                           </span>
                           {r.diagnostics && (
-                            <span className="text-muted-foreground text-[10px]" title={`Yatırımlar: ${r.diagnostics.deposits?.total_seen ?? 0} tarandı, en eski ${r.diagnostics.deposits?.oldest_date ?? '—'}, en yeni ${r.diagnostics.deposits?.newest_date ?? '—'}, ${r.diagnostics.deposits?.pages_visited ?? 0} sayfa; Çekimler: ${r.diagnostics.withdrawals?.total_seen ?? 0}, ${r.diagnostics.withdrawals?.oldest_date ?? '—'}→${r.diagnostics.withdrawals?.newest_date ?? '—'}, ${r.diagnostics.withdrawals?.pages_visited ?? 0} sayfa`}>
-                              (Y: {r.diagnostics.deposits?.total_seen ?? 0} tarandı, en eski {r.diagnostics.deposits?.oldest_date ?? '—'} · Ç: {r.diagnostics.withdrawals?.total_seen ?? 0}, en eski {r.diagnostics.withdrawals?.oldest_date ?? '—'})
-                            </span>
+                            <>
+                              <span className="text-muted-foreground text-[10px]" title={JSON.stringify(r.diagnostics, null, 2)}>
+                                (Y: {r.diagnostics.deposits?.total_seen ?? 0} tarandı, en eski {r.diagnostics.deposits?.oldest_date ?? '—'} · Ç: {r.diagnostics.withdrawals?.total_seen ?? 0}, en eski {r.diagnostics.withdrawals?.oldest_date ?? '—'})
+                              </span>
+                              {r.diagnostics.deposits?.headers && (
+                                <details className="w-full mt-1">
+                                  <summary className="text-[10px] text-primary cursor-pointer">Tablo yapısı (debug)</summary>
+                                  <div className="text-[10px] text-muted-foreground font-data mt-1 space-y-1">
+                                    <div><span className="text-foreground">Kolonlar (Yatırım):</span> {(r.diagnostics.deposits.headers || []).join(" | ")}</div>
+                                    <div><span className="text-foreground">Column map:</span> {JSON.stringify(r.diagnostics.deposits.column_map)}</div>
+                                    {(r.diagnostics.deposits.sample_rows || []).slice(0, 2).map((row, i) => (
+                                      <div key={i}><span className="text-foreground">Satır #{i+1}:</span> {(row || []).map((c, j) => `[${j}]${c}`).join(" | ")}</div>
+                                    ))}
+                                  </div>
+                                </details>
+                              )}
+                            </>
                           )}
                           {r.debug_screenshot && (
                             <a

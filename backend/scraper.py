@@ -219,10 +219,38 @@ async def _try_set_page_size_100(page):
     return None
 
 
+async def _detect_columns(page) -> dict:
+    """Read the table headers and return a mapping {logical_name: col_index}.
+    Matches Turkish column names case-insensitively with substring."""
+    headers = await page.evaluate(
+        """
+        () => {
+          const ths = Array.from(document.querySelectorAll('table thead th'));
+          return ths.map(h => (h.innerText || '').trim().toLowerCase());
+        }
+        """
+    )
+    def find(patterns):
+        for i, h in enumerate(headers):
+            for p in patterns:
+                if p in h:
+                    return i
+        return None
+    return {
+        "headers": headers,
+        "provider": find(["sağlayıcı", "saglayici", "provider"]),
+        "method": find(["yöntem", "yontem", "method"]),
+        "tur": find(["tür", "tur", "type"]),
+        "status": find(["durum", "status"]),
+        "amount": find(["tutar", "amount", "miktar"]),
+        "created": find(["oluşturulma", "olusturulma", "tarih", "date", "created"]),
+    }
+
+
 async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 30000):
     """Extract all visible rows from the current transactions listing table across all pages.
 
-    Returns a dict: {rows, total_seen, newest_date, oldest_date, pages_visited}
+    Returns a dict with rows + diagnostics (headers, sample_row, total_seen, etc.)
     """
     rows: List[ScrapedRow] = []
     await page.wait_for_selector("table tbody tr", timeout=timeout_ms)
@@ -231,11 +259,16 @@ async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 3000
     await _try_set_page_size_100(page)
     await page.wait_for_timeout(600)
 
+    # Detect column indices dynamically (Turkish headers)
+    cols = await _detect_columns(page)
+    log.info(f"[scraper] Detected columns: {cols}")
+
     seen_earlier = False
     max_pages = 100  # safety cap
     total_seen = 0
     all_dates: List[str] = []
     pages_visited = 0
+    sample_rows: List[list] = []  # first ≤3 raw rows for debugging
 
     for page_idx in range(max_pages):
         pages_visited += 1
@@ -248,17 +281,23 @@ async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 3000
             }
             """
         )
+        # Preserve first ≤3 rows across the whole scrape for debugging
+        while len(sample_rows) < 3 and row_data:
+            sample_rows.append(row_data[len(sample_rows)] if len(sample_rows) < len(row_data) else None)
+            if len(sample_rows) >= len(row_data):
+                break
+
         page_rows_added = 0
         for cells in row_data:
-            if len(cells) < 10:
+            if not cells:
                 continue
             total_seen += 1
-            provider = _norm(cells[2])
-            method = _norm(cells[3])
-            tur = _norm(cells[4])
-            status = _norm(cells[5])
-            amount_txt = cells[6]
-            created = cells[9]
+            provider = _norm(cells[cols["provider"]]) if cols.get("provider") is not None and cols["provider"] < len(cells) else ""
+            method = _norm(cells[cols["method"]]) if cols.get("method") is not None and cols["method"] < len(cells) else ""
+            tur = _norm(cells[cols["tur"]]) if cols.get("tur") is not None and cols["tur"] < len(cells) else ""
+            status = _norm(cells[cols["status"]]) if cols.get("status") is not None and cols["status"] < len(cells) else ""
+            amount_txt = cells[cols["amount"]] if cols.get("amount") is not None and cols["amount"] < len(cells) else ""
+            created = cells[cols["created"]] if cols.get("created") is not None and cols["created"] < len(cells) else ""
             iso = _iso_date_from_source_created(created)
             if not iso:
                 continue
@@ -307,6 +346,9 @@ async def _extract_table_rows(page, target_iso_date: str, timeout_ms: int = 3000
         "newest_date": newest,
         "oldest_date": oldest,
         "pages_visited": pages_visited,
+        "headers": cols.get("headers"),
+        "column_map": {k: v for k, v in cols.items() if k != "headers"},
+        "sample_rows": sample_rows[:3],
     }
 
 
