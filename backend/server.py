@@ -3929,6 +3929,46 @@ async def run_scraper_now(site_id: str, inp: ScraperRunInput, user: dict = Depen
     return result
 
 
+class ScraperBackfillInput(BaseModel):
+    start_date: str  # YYYY-MM-DD (inclusive)
+    end_date: Optional[str] = None  # YYYY-MM-DD (inclusive). Defaults to yesterday.
+
+
+@api_router.post("/admin/scraper/{site_id}/backfill")
+async def backfill_scraper(site_id: str, inp: ScraperBackfillInput, user: dict = Depends(require_admin)):
+    """Sequentially scrape a date range (inclusive). Capped at 62 days to avoid runaway.
+    Returns per-day result summaries."""
+    try:
+        start = datetime.strptime(inp.start_date, "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(400, "start_date geçersiz (YYYY-MM-DD)")
+    end = (date.today() - timedelta(days=1)) if not inp.end_date else datetime.strptime(inp.end_date, "%Y-%m-%d").date()
+    if end < start:
+        raise HTTPException(400, "end_date, start_date'den küçük olamaz")
+    days = (end - start).days + 1
+    if days > 62:
+        raise HTTPException(400, f"Aralık çok geniş: {days} gün. Maksimum 62 gün.")
+
+    results = []
+    cur = start
+    while cur <= end:
+        iso = cur.isoformat()
+        try:
+            r = await _run_scraper_for_site(site_id, iso, triggered_by=f"backfill:{user.get('email')}")
+        except Exception as e:
+            r = {"ok": False, "error": str(e), "target_date": iso}
+        results.append({"date": iso, **{k: v for k, v in r.items() if k != "target_date"}})
+        cur = cur + timedelta(days=1)
+
+    ok_count = sum(1 for r in results if r.get("ok"))
+    await log_audit(
+        user, "scraper.backfill", "scraper_config", site_id,
+        details={"start": start.isoformat(), "end": end.isoformat(), "days": days, "ok_count": ok_count},
+        site_id=site_id,
+    )
+    return {"days": days, "ok_count": ok_count, "fail_count": days - ok_count, "results": results}
+
+
 async def _scraper_daily_loop():
     """Background task: at 01:00 Europe/Istanbul (22:00 UTC), scrape yesterday for all enabled sites."""
     while True:

@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import {
   Bot, Save, Loader2, Play, Plus, Trash2, ChevronDown, ChevronRight,
   KeyRound, Link2, CheckCircle2, XCircle, MinusCircle, RefreshCw, Calendar, Zap,
+  CalendarRange,
 } from "lucide-react";
 
 function fmtDate(iso) {
@@ -48,6 +49,11 @@ export default function AdminScraper() {
   const [runDateOpen, setRunDateOpen] = useState(false);
   const [runDate, setRunDate] = useState("");
   const [runResult, setRunResult] = useState(null);
+  const [backfillOpen, setBackfillOpen] = useState(false);
+  const [backfillStart, setBackfillStart] = useState("2026-08-01");
+  const [backfillEnd, setBackfillEnd] = useState("");
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -167,6 +173,37 @@ export default function AdminScraper() {
       toast.error(msg);
     } finally {
       setTesting(false);
+    }
+  };
+
+  const openBackfill = () => {
+    // Default end = yesterday
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    setBackfillEnd(d.toISOString().slice(0, 10));
+    setBackfillResult(null);
+    setBackfillOpen(true);
+  };
+
+  const runBackfill = async () => {
+    if (!backfillStart || !backfillEnd) return toast.error("Başlangıç ve bitiş tarihi seçin");
+    setBackfilling(true);
+    setBackfillResult(null);
+    try {
+      const r = await api.post(`/admin/scraper/${detail.site_id}/backfill`, {
+        start_date: backfillStart,
+        end_date: backfillEnd,
+      }, { timeout: 15 * 60 * 1000 }); // 15 min for large ranges
+      setBackfillResult(r.data);
+      if (r.data?.fail_count === 0) toast.success(`Toplu çekim tamam: ${r.data.days} gün başarılı`);
+      else toast.warning(`${r.data.ok_count}/${r.data.days} gün başarılı — ${r.data.fail_count} gün hatalı`);
+      await load();
+      const cfg = await api.get(`/admin/scraper/${detail.site_id}`);
+      setDetail({ ...cfg.data, _password_input: "" });
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Toplu çekim başarısız");
+    } finally {
+      setBackfilling(false);
     }
   };
 
@@ -388,6 +425,9 @@ export default function AdminScraper() {
                       <Button onClick={openRun} variant="outline" className="rounded-sm border-border h-9 gap-2" disabled={!detail.enabled || (!detail.password_set && !detail._password_input)} data-testid="scraper-run-now">
                         <Play className="w-3.5 h-3.5" /> Şimdi Çek
                       </Button>
+                      <Button onClick={openBackfill} variant="outline" className="rounded-sm border-border h-9 gap-2" disabled={!detail.enabled || (!detail.password_set && !detail._password_input)} data-testid="scraper-backfill">
+                        <CalendarRange className="w-3.5 h-3.5" /> Toplu Çekim
+                      </Button>
                       <Button onClick={save} disabled={saving} className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 h-9 gap-2" data-testid="scraper-save">
                         {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Kaydet
                       </Button>
@@ -482,6 +522,59 @@ export default function AdminScraper() {
             <Button variant="ghost" onClick={() => setRunDateOpen(false)} disabled={running} className="rounded-sm border border-border h-9">Kapat</Button>
             <Button onClick={runNow} disabled={running || !runDate} className="rounded-sm bg-primary text-primary-foreground h-9 gap-2" data-testid="scraper-run-confirm">
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Çalıştır
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Backfill (bulk range) Dialog */}
+      <Dialog open={backfillOpen} onOpenChange={setBackfillOpen}>
+        <DialogContent className="bg-card border-border rounded-sm max-w-lg" data-testid="scraper-backfill-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display text-foreground flex items-center gap-2">
+              <CalendarRange className="w-4 h-4 text-primary" /> Toplu Çekim — {items.find((i) => i.site_id === detail?.site_id)?.site_name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Belirlediğin tarih aralığındaki her gün için kaynak siteye login olunur, o günün Tamamlandı transaksiyonları çekilip Günlük Giriş tablosuna işlenir. Maksimum 62 gün. Aralık büyükse birkaç dakika sürebilir.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5 flex items-center gap-1"><Calendar className="w-3 h-3" /> Başlangıç</label>
+                <Input type="date" value={backfillStart} onChange={(e) => setBackfillStart(e.target.value)} className="bg-transparent border-border rounded-sm h-9 font-data" data-testid="scraper-backfill-start" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground block mb-1.5 flex items-center gap-1"><Calendar className="w-3 h-3" /> Bitiş</label>
+                <Input type="date" value={backfillEnd} onChange={(e) => setBackfillEnd(e.target.value)} className="bg-transparent border-border rounded-sm h-9 font-data" data-testid="scraper-backfill-end" />
+              </div>
+            </div>
+            {backfillResult && (
+              <div className="border border-border rounded-sm bg-background p-3 text-xs max-h-64 overflow-auto" data-testid="scraper-backfill-result">
+                <div className="mb-2">
+                  <span className="text-[hsl(144_100%_55%)]">{backfillResult.ok_count}</span>
+                  <span className="text-muted-foreground"> / {backfillResult.days} gün başarılı</span>
+                  {backfillResult.fail_count > 0 && <span className="text-[hsl(345_100%_65%)]"> · {backfillResult.fail_count} hata</span>}
+                </div>
+                <div className="space-y-0.5 font-data">
+                  {(backfillResult.results || []).map((r) => (
+                    <div key={r.date} className="flex items-center gap-2">
+                      <span className="text-muted-foreground w-24">{r.date}</span>
+                      {r.ok ? (
+                        <span className="text-[hsl(144_100%_55%)] text-[11px]">✓ {r.row_count || 0} satır</span>
+                      ) : (
+                        <span className="text-[hsl(345_100%_65%)] text-[11px]">✗ {r.error}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex flex-row justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setBackfillOpen(false)} disabled={backfilling} className="rounded-sm border border-border h-9">Kapat</Button>
+            <Button onClick={runBackfill} disabled={backfilling || !backfillStart || !backfillEnd} className="rounded-sm bg-primary text-primary-foreground h-9 gap-2" data-testid="scraper-backfill-confirm">
+              {backfilling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarRange className="w-3.5 h-3.5" />} Aralığı Çek
             </Button>
           </DialogFooter>
         </DialogContent>
