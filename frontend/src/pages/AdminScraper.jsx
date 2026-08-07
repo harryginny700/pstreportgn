@@ -566,8 +566,8 @@ export default function AdminScraper() {
                             {r.row_count > 0 ? `✓ ${r.row_count} satır` : `⚠ 0 satır bulundu`}
                           </span>
                           {r.diagnostics && (
-                            <span className="text-muted-foreground text-[10px]">
-                              (Y: {r.diagnostics.deposits?.total_seen ?? 0} taranmış, Ç: {r.diagnostics.withdrawals?.total_seen ?? 0})
+                            <span className="text-muted-foreground text-[10px]" title={`Yatırımlar: ${r.diagnostics.deposits?.total_seen ?? 0} tarandı, en eski ${r.diagnostics.deposits?.oldest_date ?? '—'}, en yeni ${r.diagnostics.deposits?.newest_date ?? '—'}, ${r.diagnostics.deposits?.pages_visited ?? 0} sayfa; Çekimler: ${r.diagnostics.withdrawals?.total_seen ?? 0}, ${r.diagnostics.withdrawals?.oldest_date ?? '—'}→${r.diagnostics.withdrawals?.newest_date ?? '—'}, ${r.diagnostics.withdrawals?.pages_visited ?? 0} sayfa`}>
+                              (Y: {r.diagnostics.deposits?.total_seen ?? 0} tarandı, en eski {r.diagnostics.deposits?.oldest_date ?? '—'} · Ç: {r.diagnostics.withdrawals?.total_seen ?? 0}, en eski {r.diagnostics.withdrawals?.oldest_date ?? '—'})
                             </span>
                           )}
                           {r.debug_screenshot && (
